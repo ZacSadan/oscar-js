@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Patient data — NEVER commit.
+#
+# SDCARD/ is a real Löwenstein prisma card dump: therapy records, device logs
+# and a device certificate. The screenshots in docs/screenshots/ are generated
+# from synthetic data instead, precisely so this folder never has to be shared.
+# ---------------------------------------------------------------------------
+SDCARD/
+
+# Any other card dump dropped in the working tree.
+*.pscfg
+*.psstat
+*.pscloud
+*.wmedf
+*.tc
+event_*.xml
+
+# Exports produced by the app itself.
+cpap-*.csv
+cpap-*.json
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+node_modules/
+package-lock.json
+npm-debug.log*
+.env
+.env.local
+
+# ---------------------------------------------------------------------------
+# OS and editor cruft
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+System Volume Information/
+$RECYCLE.BIN/
+.vscode/
+.idea/
+*.swp
+*~

@@ -1,0 +1,90 @@
+<!doctype html>
+<!--
+  Hebrew is the default, so the markup ships as lang="he" dir="rtl" and the
+  page is correct before any script runs — no flash of English or of LTR
+  layout. app.js only changes these when the browser prefers English or the
+  reader picks a language from the selector.
+-->
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מנתח CPAP</title>
+<meta name="description" content="ניתוח כרטיס SD של מכשיר Löwenstein prisma, כולו בדפדפן שלך. בלי העלאה ובלי שרת.">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🫁</text></svg>">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="brand">
+      <h1 id="app-title">מנתח CPAP</h1>
+      <p id="app-subtitle" class="subtitle">ניתוח כרטיס SD של Löwenstein prisma — הכול בדפדפן שלך</p>
+    </div>
+    <div class="lang-picker">
+      <label id="lang-label" for="lang-select">שפה</label>
+      <select id="lang-select">
+        <option value="he">עברית</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ----------------------------------------------------------------- -->
+  <section id="intro">
+    <div id="drop-zone" class="drop-zone">
+      <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"
+              fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+      <button id="pick-btn" type="button" class="primary-btn">בחר את תיקיית כרטיס ה‑SD</button>
+      <!-- webkitdirectory is the cross-browser folder picker; the File System
+           Access API is preferred at runtime when available. -->
+      <input id="folder-input" type="file" webkitdirectory directory multiple hidden>
+      <p id="drop-or" class="drop-or">או גרור את התיקייה לכאן</p>
+      <p id="drop-hint" class="drop-hint">בחר את תיקיית השורש של הכרטיס (זו שמכילה את config.pscfg). תיקיות המשנה נקראות אוטומטית.</p>
+    </div>
+    <p id="privacy-note" class="privacy">הכול פועל בדפדפן שלך והנתונים לא יוצאים מהמכשיר הזה — אין העלאה, אין שרת, אין מעקב.</p>
+    <div id="status" class="status" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="status-text" role="status" aria-live="polite"></span>
+      <span id="status-bar" class="progress"><i></i></span>
+    </div>
+
+    <!-- Credits appear here too, so they are visible before a folder is
+         picked and not only at the foot of a finished report. -->
+    <div id="intro-credits" class="panel panel-quiet"></div>
+  </section>
+
+  <!-- ----------------------------------------------------------------- -->
+  <section id="results" hidden>
+    <div class="toolbar no-print">
+      <button id="reset-btn" type="button" class="ghost-btn"></button>
+      <span class="toolbar-spacer"></span>
+      <button id="csv-btn" type="button" class="ghost-btn"></button>
+      <button id="json-btn" type="button" class="ghost-btn"></button>
+      <button id="print-btn" type="button" class="ghost-btn"></button>
+    </div>
+
+    <div id="device" class="panel"></div>
+    <div id="summary" class="panel"></div>
+    <div id="insights" class="panel"></div>
+    <div id="charts" class="panel"></div>
+    <div id="nights" class="panel"></div>
+    <div id="glossary" class="panel"></div>
+    <div id="appendix" class="panel"></div>
+    <div id="errors" class="panel panel-quiet" hidden></div>
+  </section>
+
+</main>
+
+<!-- The privacy statement appears once, in the drop zone above. -->
+
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
