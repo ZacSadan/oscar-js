@@ -13,6 +13,13 @@ honest account of how every number was derived. In Hebrew and English.
 [![Privacy](https://img.shields.io/badge/data-never%20leaves%20your%20device-blue)](#privacy)
 [![Languages](https://img.shields.io/badge/languages-עברית%20%7C%20English-blue)](#language)
 
+<br>
+
+### ▶ [**Run it now**](https://zacsadan.github.io/oscar-js/)
+
+No install, no sign-up — it opens straight into the app.
+Your card is read in the browser and never uploaded.
+
 </div>
 
 ---
