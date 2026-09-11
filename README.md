@@ -64,6 +64,119 @@ too readily. The insight engine also runs a **reliability gate first**, so
 caveats about short nights or heavy leak appear *above* the findings they
 undermine rather than buried beneath them.
 
+#### All 39 rules
+
+Findings are sorted by severity — <kbd>critical</kbd>, then <kbd>warning</kbd>,
+<kbd>info</kbd>, <kbd>good</kbd>. Many rules are **tiered alternatives on the
+same measure**, so they can never fire together: an average AHI is controlled
+*or* mild *or* moderate *or* severe, and leak lands in exactly one of five
+bands. A typical report surfaces six to ten findings, not thirty-nine.
+
+Thresholds below are the literal conditions in
+[`generateInsights()`](js/analysis.js); `avg` means the mean across scored
+nights.
+
+**Reliability gates** — these run first, so a caveat appears above the findings
+it undermines.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| No therapy data found | no night has any usage | critical | — |
+| Some nights are too short to score reliably | any night under 2 h; warning if >30% of nights | warning / info | Clinical |
+| Leak is high enough to distort the other numbers | avg leak ≥ 15% of the night | warning | Device |
+
+**Overall AHI control** — exactly one of these four always fires.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Your AHI is in the normal range | avg AHI < 5 | good | Clinical |
+| AHI is mildly elevated on treatment | 5 ≤ avg AHI < 15 | warning | Clinical |
+| AHI remains in the moderate range | 15 ≤ avg AHI < 30 | critical | Clinical |
+| AHI is high despite therapy | avg AHI ≥ 30 | critical | Clinical |
+
+**Residual events despite a normal AHI** — the things an AHI alone hides.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Low AHI but frequent arousals | avg AHI < 5 **and** avg RDI ≥ 10 | warning | Clinical |
+| A few nights stand out from the rest | avg AHI < 5 but some nights ≥ 5 | info | — |
+| Flow limitation despite a normal AHI | avg AHI < 5 **and** flow limitation ≥ 30% of night | warning | Research |
+
+**Central events** — one of three, gated on at least 10 apneas so a handful of
+events cannot trigger alarm.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Most of your apneas are central, not obstructive | ≥50% central **and** central index ≥ 5/h | critical | Clinical |
+| Most apneas were central, but they were few | ≥50% central, index < 5/h | info | Clinical |
+| A meaningful share of central events | ≥25% central | info | Research |
+
+**Breathing patterns**
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Periodic breathing over much of the night | avg ≥ 25% of night | warning | App's own cut |
+| Some periodic breathing detected | avg ≥ 10% of night | info | App's own cut |
+| The machine flagged a Cheyne-Stokes pattern | avg CSR ≥ 10% of night | critical | Clinical |
+
+**Adherence and usage**
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Excellent, consistent use | ≥95% of nights at 4 h **and** avg ≥ 7 h | good | Clinical |
+| Use is below the usual benchmark | <70% of nights reach 4 h | critical | Clinical |
+| Nights are on the short side | avg < 6 h (and not already flagged above) | warning | App's own cut |
+| Some nights have no data | any calendar day missing; warning if >20% | warning / info | — |
+| Night-to-night use varies a lot | standard deviation > 1.5 h | warning | App's own cut |
+| Nightly use is declining | usage trend slope < −0.1 h/night, ≥5 nights | warning | — |
+| _n_ nights in a row at 4 hours or more | streak ≥ 7 nights | good | App's own cut |
+
+**Mask and leak** — graded by the *share of the night* spent in large leak, not
+by event count. Exactly one of the first four fires.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Large leak for much of the night | avg ≥ 30% of night | critical | Device |
+| Leak is taking up a meaningful part of the night | avg ≥ 15% | warning | App's own cut |
+| Some large leak, at a manageable level | avg ≥ 5% | info | App's own cut |
+| Large leak was recorded | any large-leak event, avg < 5% | info | — |
+| One long, continuous leak | a single leak ≥ 60 min while avg < 15% | warning | — |
+| The mask comes off during the night | ≥2 mask-off events per night on average | warning | App's own cut |
+
+**Snoring** — framed as a prompt to look; no clinical threshold exists for a
+"high" snore index on therapy.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Frequent snoring detected | avg snore index ≥ 30/h | info | App's own cut |
+| Some snoring on therapy | avg snore index ≥ 10/h | info | App's own cut |
+
+**Pressure** — requires a readable `config.pscfg`.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Therapy is reaching your pressure limit | p95 within 0.3 cmH₂O of the configured max on ≥30% of nights | warning | — |
+| Fixed pressure with residual events | mode is CPAP **and** avg AHI ≥ 5 | info | — |
+
+**Event duration and timing** — information AHI throws away.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| Some breathing pauses lasted a long time | any event ≥ 30 s; warning if ≥5 per night | warning / info | Research |
+| A notably long breathing pause | longest apnea ≥ 60 s (and none ≥ 30 s counted) | info | App's own cut |
+| Events cluster later in the night | ≥50% of events in the final third, ≥20 events total | info | Research |
+| Your bedtimes vary widely | p10–p90 bedtime spread > 90 min, ≥7 nights | info | Research |
+
+**Trend** — requires at least 5 scored nights.
+
+| Finding | Fires when | Severity | Tier |
+|---|---|---|---|
+| AHI is trending upward | regression slope > +0.15 /night | warning | — |
+| AHI is trending downward | regression slope < −0.15 /night | good | — |
+
+Rows with `—` in the Tier column are structural or arithmetic observations
+rather than threshold judgements, so they carry no provenance badge.
+
 ### Five trend charts, drawn without a chart library
 
 <div align="center">
