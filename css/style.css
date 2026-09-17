@@ -529,6 +529,15 @@ main { padding-block: 26px 40px; }
    rather than the default threshold red. */
 .avg-treated-text   { fill: var(--sleep-deep); }
 .avg-untreated-text { fill: var(--sleep-bar); }
+
+/* Weekday labels on the restorative-sleep chart, tinted by which half of the
+   night scored higher. Bold as well as coloured, so the mark does not depend
+   on colour vision alone. */
+.wd-better { fill: var(--good); font-weight: 700; }
+.wd-worse  { fill: var(--bad);  font-weight: 700; }
+
+/* Backing plate so an average label stays readable where it crosses a bar. */
+.avg-label-plate { fill: var(--surface); opacity: .88; }
 .swatch.bar-cpap   { background: var(--sleep-deep); }
 .swatch.bar-nocpap { background: var(--sleep-bar); }
 

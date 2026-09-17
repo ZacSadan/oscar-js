@@ -681,6 +681,36 @@ export async function attachNightlySplit (report, accessToken, onProgress = () =
   }
 
   report.sleep.hasNightlySplit = any;
+
+  // Recompute the two averages from the split, over ONLY the nights CPAP was
+  // actually involved in.
+  //
+  // The whole-night averages from attachSleep answer a different question:
+  // they compare therapy nights against nights the machine never ran, which
+  // are disproportionately travel, illness and nights off. Once a night can
+  // be split, the honest comparison is within those nights — masked sleep
+  // against unmasked sleep on the same nights, where everything else about
+  // the night is held constant. A night with no therapy at all contributes
+  // to neither average, because it has no masked half to compare against.
+  if (any) {
+    const on = [], off = [];
+    for (const night of report.nights) {
+      const sp = night.sleepSplit;
+      if (!sp) continue;
+      if (sp.on?.deepRemPct != null) on.push(sp.on.deepRemPct);
+      // The unmasked half only counts when the same night also had therapy,
+      // so the two averages describe the same set of nights.
+      if (sp.on?.deepRemPct != null && sp.off?.deepRemPct != null) {
+        off.push(sp.off.deepRemPct);
+      }
+    }
+    const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    report.sleep.treated = { ...report.sleep.treated, count: on.length, deepRemPct: mean(on) };
+    report.sleep.untreated = { ...report.sleep.untreated, count: off.length, deepRemPct: mean(off) };
+    // Both sides must still be substantial enough to put a line through.
+    report.sleep.comparable = on.length >= 3 && off.length >= 3;
+  }
+
   return report;
 }
 

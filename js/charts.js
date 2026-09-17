@@ -147,15 +147,18 @@ function dayLabel (night, i18n) {
  * because they are short enough never to collide and the weekly rhythm is
  * the point of showing them.
  */
-function xLabels (s, n, labels, h) {
+function xLabels (s, n, labels, h, weekdayClass = null) {
   const g = el('g', { class: 'x-labels' });
 
-  // Weekday row: always complete.
+  // Weekday row: always complete. `weekdayClass` lets a chart tint individual
+  // weekday labels — used to mark which nights came out better.
   for (let i = 0; i < n; i++) {
     const wd = Array.isArray(labels[i]) ? labels[i][0] : null;
     if (!wd) continue;
+    const extra = weekdayClass ? weekdayClass(i) : null;
     g.appendChild(el('text', {
-      x: s.bx(i, n), y: h - PAD.bottom + 14, class: 'tick tick-weekday',
+      x: s.bx(i, n), y: h - PAD.bottom + 14,
+      class: `tick tick-weekday${extra ? ' ' + extra : ''}`,
       'text-anchor': 'middle'
     }, wd));
   }
@@ -809,29 +812,37 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   // first; a night with no therapy at all has only the second. A night the
   // mask came off partway has BOTH, which is the tightest comparison here —
   // same person, same night, both sides.
+  // Only nights CPAP was actually involved in appear here.
+  //
+  // A night the machine never ran has nothing to compare against — its sleep
+  // is unmasked from end to end, so showing it beside the masked nights
+  // invites reading a difference that is really just "this was a night off".
+  // Those nights are still visible on the other charts; this one is strictly
+  // about what changed when the mask was on.
   const rows = s.nights.map(x => {
     const split = splitByKey.get(x.dateKey);
     if (split) {
+      // Split nights only count when there IS a masked half to compare.
+      if (!split.on) return null;
       return {
         key: x.dateKey,
         dateObj: keyToDateLocal(x.dateKey),
         on: split.on, off: split.off
       };
     }
-    // No intra-night detail: fall back to the whole night, assigned to
-    // whichever side the card says it belongs to.
-    const whole = {
-      deepRemPct: x.deepRemPct, deepPct: x.deepPct, remPct: x.remPct,
-      sleepSec: x.totalSleepSec
-    };
-    const treated = treatedKeys.has(x.dateKey);
+    // No intra-night detail: the whole night stands as its masked figure,
+    // but only if the card recorded therapy for it.
+    if (!treatedKeys.has(x.dateKey)) return null;
     return {
       key: x.dateKey,
       dateObj: keyToDateLocal(x.dateKey),
-      on: treated ? whole : null,
-      off: treated ? null : whole
+      on: {
+        deepRemPct: x.deepRemPct, deepPct: x.deepPct, remPct: x.remPct,
+        sleepSec: x.totalSleepSec
+      },
+      off: null
     };
-  }).filter(r => r.on || r.off)
+  }).filter(Boolean)
     .sort((a, b) => a.key.localeCompare(b.key));
 
   if (rows.length < 2) return null;
@@ -847,30 +858,6 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   const n = rows.length;
   const full = scale.bw(n);
   const bw = full / 2;
-
-  // Group averages as dashed references, so one night reads against the
-  // pattern it belongs to.
-  if (s.comparable) {
-    const avgs = [
-      { v: s.treated.deepRemPct, cls: 'avg-treated', label: i18n.t('sleepWithCpap') },
-      { v: s.untreated.deepRemPct, cls: 'avg-untreated', label: i18n.t('sleepWithoutCpap') }
-    ].filter(g => g.v != null).sort((a, b) => b.v - a.v);
-
-    let lastLabelY = -Infinity;
-    for (const g of avgs) {
-      const y = scale.y(g.v);
-      svg.appendChild(el('line', {
-        x1: PAD.left, x2: w - PAD.right, y1: y, y2: y, class: `avg-line ${g.cls}`
-      }));
-      let labelY = y - 4;
-      if (labelY - lastLabelY < 13) labelY = lastLabelY + 13;
-      lastLabelY = labelY;
-      svg.appendChild(el('text', {
-        x: PAD.left + 4, y: labelY, class: `threshold-label ${g.cls}-text`,
-        'text-anchor': 'start'
-      }, `${g.label} ${i18n.num(g.v, 0)}%`));
-    }
-  }
 
   rows.forEach((r, i) => {
     // With-CPAP takes the left half of the slot, without-CPAP the right, so
@@ -896,10 +883,58 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
     }
   });
 
+  // Group averages as dashed references, so one night reads against the
+  // pattern it belongs to.
+  if (s.comparable) {
+    const avgs = [
+      { v: s.treated.deepRemPct, cls: 'avg-treated', label: i18n.t('sleepWithCpap') },
+      { v: s.untreated.deepRemPct, cls: 'avg-untreated', label: i18n.t('sleepWithoutCpap') }
+    ].filter(g => g.v != null).sort((a, b) => b.v - a.v);
+
+    let lastLabelY = -Infinity;
+    for (const g of avgs) {
+      const y = scale.y(g.v);
+      svg.appendChild(el('line', {
+        x1: PAD.left, x2: w - PAD.right, y1: y, y2: y, class: `avg-line ${g.cls}`
+      }));
+      // Labels are stacked above their line, and pushed apart when the two
+      // averages are close — which is exactly when a reader most needs to
+      // tell them apart. 15px clears the font's line box.
+      let labelY = y - 5;
+      if (labelY - lastLabelY < 15) labelY = lastLabelY + 15;
+      lastLabelY = labelY;
+      const text = `${g.label} ${i18n.num(g.v, 0)}%`;
+      // A bare label lands on top of the bars and becomes unreadable, so it
+      // sits on a plate in the panel colour. Width is estimated from the
+      // character count — close enough at this font size, and it avoids a
+      // layout measurement that would force a reflow.
+      svg.appendChild(el('rect', {
+        x: PAD.left + 2, y: labelY - 10, width: text.length * 6.2 + 8, height: 14,
+        rx: 3, class: 'avg-label-plate'
+      }));
+      svg.appendChild(el('text', {
+        x: PAD.left + 6, y: labelY, class: `threshold-label ${g.cls}-text`,
+        'text-anchor': 'start'
+      }, text));
+    }
+  }
+
+  // Tint the weekday label by which half of the night came out better. Only
+  // nights carrying BOTH figures can be judged; a night with no unmasked
+  // sleep has nothing to lose to, so it stays neutral.
+  const verdict = (i) => {
+    const r = rows[i];
+    const a = r?.on?.deepRemPct, b = r?.off?.deepRemPct;
+    if (a == null || b == null) return null;
+    // A hair's difference is not a verdict; require a clear margin.
+    if (Math.abs(a - b) < 1) return null;
+    return a > b ? 'wd-better' : 'wd-worse';
+  };
+
   svg.appendChild(xLabels(scale, n, rows.map(r => [
     i18n.weekday(r.dateObj, 'narrow'),
     i18n.date(r.dateObj, { day: '2-digit', month: '2-digit' })
-  ]), h));
+  ]), h, verdict));
   return svg;
 }
 
