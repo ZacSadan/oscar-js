@@ -110,7 +110,7 @@ export const STRINGS = {
 
     /* --- Withings sleep import --- */
     chartSleepStages: 'Restorative sleep — with CPAP vs without',
-    chartSleepStagesHint: 'The share of sleep spent in deep and REM, the two stages most associated with feeling rested. Blue is sleep while the mask was on, grey is sleep without it. A night showing both bars is one where the mask came off partway — the tightest comparison here, since both halves are the same night. Measured by your watch, not by the CPAP machine.',
+    chartSleepStagesHint: 'The share of sleep spent in deep and REM, the two stages most associated with feeling rested. Blue is sleep while the mask was on, grey is sleep after it came off. Only nights where the mask came off partway appear here, because only those have both halves to compare — a night you wore it throughout has nothing to measure against. The weekday is green where the masked half scored higher and red where it did not. Measured by your watch, not by the CPAP machine.',
     sleepWithCpap: 'With CPAP',
     sleepWithoutCpap: 'Without CPAP',
     sleepDeep: 'Deep sleep',

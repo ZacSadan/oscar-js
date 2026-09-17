@@ -697,14 +697,16 @@ export async function attachNightlySplit (report, accessToken, onProgress = () =
     // measured on it, so a night the watch logged but never scored does not
     // enter either average as a zero.
     const scored = (d) => d && d.deepRemPct != null && d.sleepSec > 0;
+    // Both halves are required, matching the chart: only a night where the
+    // mask came off partway contributes, and it contributes to both averages
+    // or to neither. That keeps the two lines describing one identical set of
+    // nights, so the gap between them is a like-for-like difference.
     const on = [], off = [];
     for (const night of report.nights) {
       const sp = night.sleepSplit;
-      if (!scored(sp?.on)) continue;
+      if (!scored(sp?.on) || !scored(sp?.off)) continue;
       on.push(sp.on.deepRemPct);
-      // The unmasked half only counts when the same night also had therapy,
-      // so the two averages describe the same set of nights.
-      if (scored(sp.off)) off.push(sp.off.deepRemPct);
+      off.push(sp.off.deepRemPct);
     }
     const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
     report.sleep.treated = { ...report.sleep.treated, count: on.length, deepRemPct: mean(on) };

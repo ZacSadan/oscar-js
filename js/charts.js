@@ -802,8 +802,6 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   const s = report.sleep;
   if (!s || !s.nights?.length) return null;
 
-  const treatedKeys = new Set(
-    report.nights.filter(n => n.totalSec > 0).map(n => n.date));
   const splitByKey = new Map(
     report.nights.filter(n => n.sleepSplit).map(n => [n.date, n.sleepSplit]));
 
@@ -825,31 +823,21 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   // renders as an empty slot on the axis.
   const scored = (d) => d && d.deepRemPct != null && d.sleepSec > 0;
 
+  // BOTH halves are required.
+  //
+  // A night spent entirely on therapy has no unmasked sleep to be measured
+  // against, so a lone bar contributes nothing to the comparison this chart
+  // exists to make — and reads as missing data rather than as a good night.
+  // Only nights where the mask came off partway appear, which is also what
+  // makes the comparison tight: both halves come from the same night.
   const rows = s.nights.map(x => {
     const split = splitByKey.get(x.dateKey);
-    if (split) {
-      // Split nights only count when there IS a masked half to compare.
-      if (!scored(split.on)) return null;
-      return {
-        key: x.dateKey,
-        dateObj: keyToDateLocal(x.dateKey),
-        on: split.on,
-        off: scored(split.off) ? split.off : null
-      };
-    }
-    // No intra-night detail: the whole night stands as its masked figure,
-    // but only if the card recorded therapy for it.
-    if (!treatedKeys.has(x.dateKey)) return null;
-    const whole = {
-      deepRemPct: x.deepRemPct, deepPct: x.deepPct, remPct: x.remPct,
-      sleepSec: x.totalSleepSec
-    };
-    if (!scored(whole)) return null;
+    if (!split || !scored(split.on) || !scored(split.off)) return null;
     return {
       key: x.dateKey,
       dateObj: keyToDateLocal(x.dateKey),
-      on: whole,
-      off: null
+      on: split.on,
+      off: split.off
     };
   }).filter(Boolean)
     .sort((a, b) => a.key.localeCompare(b.key));
