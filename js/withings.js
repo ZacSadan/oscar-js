@@ -92,16 +92,31 @@ export function redirectUri () {
  * OAuth: popup -> code -> token
  * -------------------------------------------------------------------------*/
 
-/** Read the popup's handoff payload, if it left one. */
+/**
+ * Read the popup's handoff payload, if it left one.
+ *
+ * localStorage, NOT sessionStorage. A popup does not reliably share a session
+ * with its opener — after the cross-origin bounce through Withings the popup
+ * can land in a fresh browsing context, where sessionStorage is a separate,
+ * empty store and window.opener is null. localStorage is shared by every
+ * same-origin context in the profile, so it survives that.
+ *
+ * Stale entries are guarded by a timestamp rather than trusted blindly.
+ */
 function readHandoff () {
   try {
-    const raw = sessionStorage.getItem(HANDOFF_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const raw = localStorage.getItem(HANDOFF_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    // An authorization code is dead after 30 s; anything older is debris from
+    // an abandoned attempt and must never resolve a new one.
+    if (!d || !d.at || Date.now() - d.at > 120000) { clearHandoff(); return null; }
+    return d;
   } catch { return null; }
 }
 
 function clearHandoff () {
-  try { sessionStorage.removeItem(HANDOFF_KEY); } catch { /* nothing to clear */ }
+  try { localStorage.removeItem(HANDOFF_KEY); } catch { /* nothing to clear */ }
 }
 
 /**
@@ -126,17 +141,19 @@ export function handleOAuthCallback () {
   const state = params.get('state');
   if (!code && !error) return false;               // an ordinary page load
 
-  const payload = { source: 'withings-oauth', code, error, state };
+  const payload = { source: 'withings-oauth', code, error, state, at: Date.now() };
 
-  // Hand off by TWO independent routes, because either can fail on its own.
+  // Hand off by TWO independent routes, because either can fail alone.
   //
-  // sessionStorage is shared with the opener (same origin, and a popup
-  // inherits the session), and is written FIRST so the result is already
-  // durable before any message is attempted. postMessage then wakes the
-  // opener immediately. If the message is lost — a listener not yet attached,
-  // an opener reference severed by the navigation — the opener still finds
-  // the code in storage when the popup closes.
-  try { sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(payload)); }
+  // localStorage is written FIRST, so the result is durable before any message
+  // is attempted. It is the route that actually survives: after the bounce
+  // through Withings the popup may have no window.opener at all, in which case
+  // postMessage has nowhere to go. localStorage is shared by every same-origin
+  // context, so the opener can still collect the code.
+  //
+  // postMessage is kept because it wakes the opener instantly instead of
+  // waiting for its next poll.
+  try { localStorage.setItem(HANDOFF_KEY, JSON.stringify(payload)); }
   catch { /* private mode: the message route has to carry it alone */ }
 
   let delivered = false;
@@ -164,12 +181,17 @@ export function handleOAuthCallback () {
  */
 function showCallbackNotice (delivered, error) {
   const he = (navigator.language || '').toLowerCase().startsWith('he');
+  // `delivered` only says whether postMessage had somewhere to go. The result
+  // was already written to localStorage either way, so the wording must not
+  // imply failure when that is the route being used — a window opened without
+  // an opener frequently cannot close itself, and the reader needs to know the
+  // report already has what it needs.
   const msg = error
     ? (he ? 'ההתחברות נכשלה. אפשר לסגור את החלון.' : 'Sign-in failed. You can close this window.')
     : delivered
       ? (he ? 'מתחבר… החלון ייסגר מיד.' : 'Connected. Closing…')
-      : (he ? 'ההתחברות הושלמה. סגור את החלון הזה וחזור לדוח.'
-            : 'Sign-in complete. Close this window and return to the report.');
+      : (he ? 'ההתחברות הושלמה — הדוח נטען כעת. אפשר לסגור את החלון הזה.'
+            : 'Sign-in complete — the report is loading. You can close this window.');
 
   document.documentElement.setAttribute('dir', he ? 'rtl' : 'ltr');
   document.documentElement.setAttribute('lang', he ? 'he' : 'en');
@@ -218,6 +240,7 @@ export function authorize (clientId) {
       if (settled) return;
       settled = true;
       window.removeEventListener('message', onMessage);
+      window.removeEventListener('storage', onStorage);
       clearInterval(timer);
       fn(arg);
     };
@@ -225,6 +248,7 @@ export function authorize (clientId) {
     /** Accept a handoff payload from either route. */
     const accept = (d) => {
       if (!d || d.source !== 'withings-oauth') return false;
+      if (settled) return true;
       clearHandoff();
       try { popup.close(); } catch { /* it closes itself too */ }
       if (d.error) finish(reject, new Error(d.error));
@@ -240,6 +264,15 @@ export function authorize (clientId) {
       accept(ev.data);
     }
     window.addEventListener('message', onMessage);
+
+    // The storage event fires in THIS window when another same-origin context
+    // writes the key, which is how the result arrives when the popup has no
+    // opener to post to. Together with the poll below this covers every case.
+    function onStorage (ev) {
+      if (ev.key && ev.key !== HANDOFF_KEY) return;
+      accept(readHandoff());
+    }
+    window.addEventListener('storage', onStorage);
 
     // Anything left in sessionStorage by a previous attempt would be stale and
     // would resolve this one with the wrong code.
@@ -259,7 +292,10 @@ export function authorize (clientId) {
         // a close is never immediately conclusive. Give the handoff time to
         // land before calling it a cancellation.
         if (!closedAt) closedAt = Date.now();
-        if (Date.now() - closedAt > 1500) {
+        if (Date.now() - closedAt > 3000) {
+          // Last look before giving up: the write and the close can land in
+          // either order, and a slow profile can put several hundred ms
+          // between them.
           if (accept(readHandoff())) return;
           finish(reject, new Error('cancelled'));
         }
