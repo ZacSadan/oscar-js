@@ -388,6 +388,114 @@ export async function fetchSleepSummary (accessToken, startYmd, endYmd) {
   return out.map(normaliseApiNight).filter(Boolean);
 }
 
+/* ---------------------------------------------------------------------------
+ * Intra-night sleep stages
+ *
+ * `getsummary` gives whole-night totals only, which cannot answer "how did I
+ * sleep while the mask was on, versus after it came off". That needs the
+ * timestamped stage intervals from Sleep v2 `get`.
+ *
+ * The endpoint returns at most 24 h per call, so this is one request per
+ * night. Nights are fetched in sequence rather than in parallel to stay well
+ * inside Withings' rate limit, which is signalled as status 601 under an
+ * HTTP 200.
+ * -------------------------------------------------------------------------*/
+
+/** Withings sleep-state codes. 1 light, 2 deep, 3 REM; 0 awake, 4 unspecified. */
+const STATE_DEEP = 2;
+const STATE_REM = 3;
+const STATE_LIGHT = 1;
+
+/**
+ * Fetch stage intervals for one night.
+ *
+ * `from`/`to` are Date objects bounding the night. Returns
+ * [{ start, end, state }] in seconds-resolution Dates, or [] when the night
+ * has no intra-night detail (older devices only upload summaries).
+ */
+export async function fetchSleepStages (accessToken, from, to) {
+  const body = new URLSearchParams({
+    action: 'get',
+    startdate: String(Math.floor(from.getTime() / 1000)),
+    enddate: String(Math.floor(to.getTime() / 1000)),
+    data_fields: 'hr'          // states come back regardless; hr is harmless
+  });
+  const res = await fetch(`${API_URL}/sleep`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body
+  });
+  const json = await res.json();
+  if (json.status === 601) throw new Error('rate-limited');
+  if (json.status !== 0) throw new Error(json.error || `withings status ${json.status}`);
+
+  return (json.body?.series || [])
+    .filter(s => s.startdate && s.enddate)
+    .map(s => ({
+      start: new Date(s.startdate * 1000),
+      end: new Date(s.enddate * 1000),
+      state: Number(s.state)
+    }))
+    .sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Split one night's stage intervals into the part overlapping CPAP therapy and
+ * the part outside it.
+ *
+ * `sessions` are the card's therapy sessions for that night, each with a start
+ * and a duration. A stage interval is clipped against every session, so an
+ * interval that straddles a mask-off boundary contributes correctly to both
+ * sides rather than being assigned wholesale to one.
+ *
+ * Returns { on, off }, each { deep, rem, light, sleep } in seconds.
+ */
+export function splitStagesByTherapy (intervals, sessions) {
+  const windows = (sessions || [])
+    .filter(s => s.startedAt && s.durationSec > 0)
+    .map(s => [s.startedAt.getTime(), s.startedAt.getTime() + s.durationSec * 1000])
+    .sort((a, b) => a[0] - b[0]);
+
+  const blank = () => ({ deep: 0, rem: 0, light: 0, sleep: 0 });
+  const on = blank(), off = blank();
+
+  for (const iv of intervals) {
+    // Only the three sleep states count toward the ratio; awake and
+    // unspecified are excluded from both numerator and denominator.
+    const isDeep = iv.state === STATE_DEEP;
+    const isRem = iv.state === STATE_REM;
+    const isLight = iv.state === STATE_LIGHT;
+    if (!isDeep && !isRem && !isLight) continue;
+
+    const a = iv.start.getTime(), b = iv.end.getTime();
+    if (!(b > a)) continue;
+
+    // Seconds of this interval that fall inside any therapy window.
+    let covered = 0;
+    for (const [ws, we] of windows) {
+      const lo = Math.max(a, ws), hi = Math.min(b, we);
+      if (hi > lo) covered += hi - lo;
+    }
+    const total = b - a;
+    const outside = Math.max(0, total - covered);
+
+    const add = (bucket, ms) => {
+      const sec = ms / 1000;
+      if (isDeep) bucket.deep += sec;
+      else if (isRem) bucket.rem += sec;
+      else bucket.light += sec;
+      bucket.sleep += sec;
+    };
+    if (covered > 0) add(on, covered);
+    if (outside > 0) add(off, outside);
+  }
+
+  return { on, off };
+}
+
 /**
  * One API series entry -> our internal shape.
  *
@@ -530,4 +638,62 @@ export function attachSleep (report, sleepNights) {
     report.sleep.treated.count >= 3 && report.sleep.untreated.count >= 3;
 
   return report;
+}
+
+/**
+ * Fetch intra-night stages for every night that has both sleep and a therapy
+ * session, and attach the masked/unmasked split to each.
+ *
+ * This is what lets a SINGLE night show two percentages: a night where the
+ * mask came off partway has restorative sleep on both sides of that moment,
+ * and comparing them is a far tighter comparison than comparing whole nights,
+ * because the same person on the same night is both groups.
+ *
+ * One request per night, run in sequence. `onProgress` lets the caller keep a
+ * status line moving; a failure on one night is recorded and skipped rather
+ * than abandoning the rest.
+ */
+export async function attachNightlySplit (report, accessToken, onProgress = () => {}) {
+  const targets = report.nights.filter(n => n.sleep && n.sessions?.length);
+  let done = 0;
+  let any = false;
+
+  for (const night of targets) {
+    await onProgress(++done, targets.length);
+    const s = night.sleep;
+    // Widen the window slightly: the watch and the machine keep their own
+    // clocks, and a stage interval clipped at the boundary would be lost.
+    const from = new Date(s.start.getTime() - 3600 * 1000);
+    const to = new Date((s.end || s.start).getTime() + 3600 * 1000);
+    try {
+      const intervals = await fetchSleepStages(accessToken, from, to);
+      if (!intervals.length) continue;
+      const { on, off } = splitStagesByTherapy(intervals, night.sessions);
+      night.sleepSplit = {
+        on: ratio(on),
+        off: ratio(off)
+      };
+      if (night.sleepSplit.on || night.sleepSplit.off) any = true;
+    } catch (err) {
+      if (err.message === 'rate-limited') throw err;   // stop; retrying will not help
+      // Any other failure on one night is not worth losing the others over.
+    }
+  }
+
+  report.sleep.hasNightlySplit = any;
+  return report;
+}
+
+/** Stage seconds -> the restorative ratio, or null when there is no sleep. */
+function ratio (b) {
+  if (!b || b.sleep <= 0) return null;
+  return {
+    deepSec: b.deep,
+    remSec: b.rem,
+    lightSec: b.light,
+    sleepSec: b.sleep,
+    deepRemPct: ((b.deep + b.rem) / b.sleep) * 100,
+    deepPct: (b.deep / b.sleep) * 100,
+    remPct: (b.rem / b.sleep) * 100
+  };
 }

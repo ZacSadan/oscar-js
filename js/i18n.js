@@ -110,7 +110,7 @@ export const STRINGS = {
 
     /* --- Withings sleep import --- */
     chartSleepStages: 'Restorative sleep — with CPAP vs without',
-    chartSleepStagesHint: 'One bar per night: the share of that night’s sleep spent in deep and REM, the two stages most associated with feeling rested. Blue nights used CPAP, grey nights did not. Measured by your watch, not by the CPAP machine.',
+    chartSleepStagesHint: 'The share of sleep spent in deep and REM, the two stages most associated with feeling rested. Blue is sleep while the mask was on, grey is sleep without it. A night showing both bars is one where the mask came off partway — the tightest comparison here, since both halves are the same night. Measured by your watch, not by the CPAP machine.',
     sleepWithCpap: 'With CPAP',
     sleepWithoutCpap: 'Without CPAP',
     sleepDeep: 'Deep sleep',
@@ -126,6 +126,7 @@ export const STRINGS = {
     withingsConnect: 'Connect Withings',
     withingsConnecting: 'Waiting for Withings…',
     withingsFetching: 'Fetching sleep data…',
+    withingsStages: 'Reading sleep stages… {n}/{total}',
     withingsSetup: 'Set up',
     withingsSetupHide: 'Hide setup',
     withingsForget: 'Forget credentials',
@@ -393,6 +394,7 @@ export const STRINGS = {
     withingsConnect: 'חיבור ל‑Withings',
     withingsConnecting: 'ממתין ל‑Withings…',
     withingsFetching: 'מוריד נתוני שינה…',
+    withingsStages: 'קורא שלבי שינה… {n}/{total}',
     withingsSetup: 'הגדרה',
     withingsSetupHide: 'הסתר הגדרה',
     withingsForget: 'מחק פרטי גישה',

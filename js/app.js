@@ -16,7 +16,7 @@ import {
 import {
   loadCredentials, saveCredentials, clearCredentials, redirectUri,
   authorize, exchangeCode, fetchSleepSummary, attachSleep,
-  handleOAuthCallback
+  handleOAuthCallback, attachNightlySplit
 } from './withings.js';
 
 let i18n = makeI18n(detectLanguage());
@@ -361,6 +361,23 @@ function renderWithings (r) {
         token.access_token, ymd(first), ymd(last));
 
       attachSleep(report, series);
+
+      // Second pass: per-minute stages, so a night where the mask came off
+      // partway can be split into its masked and unmasked halves. One request
+      // per night, so the status line reports progress.
+      if (report.sleep.matched) {
+        try {
+          await attachNightlySplit(report, token.access_token, async (i, total) => {
+            setStatus(status, i18n.t('withingsStages', { n: i, total }));
+            await new Promise(r => requestAnimationFrame(() => r()));
+          });
+        } catch (err) {
+          // The summaries already succeeded; losing the finer split is a
+          // degraded result, not a failed import.
+          console.warn('sleep stage split unavailable:', err);
+        }
+      }
+
       if (!report.sleep.matched) {
         setStatus(status, i18n.t('withingsNoMatch'), 'err');
       } else {

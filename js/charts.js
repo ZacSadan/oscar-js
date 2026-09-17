@@ -612,7 +612,27 @@ export function sleepTimingChart (nights, i18n, { w = 720, h = 260, sleep = null
   data.forEach((night, i) => {
     const x = bx(i);
     if (!night.bedtime || !night.wake) {
-      // No therapy: a short tick at the axis baseline, so the day still shows.
+      // No therapy — but the watch may still have recorded the night, and a
+      // night slept without the mask is exactly what this chart should show.
+      // The grey band is drawn on its own, with no candle beside it.
+      if (night.sleep?.start) {
+        const a = hoursFromNoon(night.sleep.start);
+        const b = a + (night.sleep.inBedSec || night.sleep.totalSleepSec) / 3600;
+        const yA = y(a), yB = y(b);
+        const band = el('rect', {
+          x: x - bw * 0.85, y: Math.min(yA, yB), width: bw * 1.7,
+          height: Math.max(2, Math.abs(yA - yB)), rx: 2, class: 'sleep-band'
+        });
+        tooltipTitle(band,
+          `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
+          `${i18n.time(night.sleep.start)}–${night.sleep.end ? i18n.time(night.sleep.end) : '—'}` +
+          `\n${i18n.t('sleepAsleep')} ${i18n.duration(night.sleep.totalSleepSec)}` +
+          `\n${i18n.t('noUse')}` +
+          `\n\n${i18n.t('gSleepBand')}`);
+        svg.appendChild(band);
+        return;
+      }
+      // Nothing at all that day: a short tick so the slot still reads.
       const base = h - PAD.bottom;
       const tick = el('line', {
         x1: x, x2: x, y1: base - 3, y2: base, class: 'candle-missing'
@@ -775,48 +795,67 @@ export function waveformChart (samples, hz, i18n, { w = 720, h = 150, label = ''
  * The caller shows that caveat, and the group averages are drawn as reference
  * lines only when there are enough nights on both sides to be worth comparing.
  * -------------------------------------------------------------------------*/
-export function sleepStageComparisonChart (report, i18n, { w = 720, h = 250 } = {}) {
+export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = {}) {
   const s = report.sleep;
   if (!s || !s.nights?.length) return null;
 
-  // Every sleep night in date order, tagged with whether the card recorded
-  // therapy for it. Nights the watch never saw cannot appear at all.
   const treatedKeys = new Set(
     report.nights.filter(n => n.totalSec > 0).map(n => n.date));
-  const rows = s.nights
-    .filter(x => x.deepRemPct != null)
-    .map(x => ({
+  const splitByKey = new Map(
+    report.nights.filter(n => n.sleepSplit).map(n => [n.date, n.sleepSplit]));
+
+  // Each row carries up to two values: sleep while the mask was on, and sleep
+  // while it was off. A night where the mask stayed on all night has only the
+  // first; a night with no therapy at all has only the second. A night the
+  // mask came off partway has BOTH, which is the tightest comparison here —
+  // same person, same night, both sides.
+  const rows = s.nights.map(x => {
+    const split = splitByKey.get(x.dateKey);
+    if (split) {
+      return {
+        key: x.dateKey,
+        dateObj: keyToDateLocal(x.dateKey),
+        on: split.on, off: split.off
+      };
+    }
+    // No intra-night detail: fall back to the whole night, assigned to
+    // whichever side the card says it belongs to.
+    const whole = {
+      deepRemPct: x.deepRemPct, deepPct: x.deepPct, remPct: x.remPct,
+      sleepSec: x.totalSleepSec
+    };
+    const treated = treatedKeys.has(x.dateKey);
+    return {
       key: x.dateKey,
       dateObj: keyToDateLocal(x.dateKey),
-      pct: x.deepRemPct,
-      deep: x.deepPct,
-      rem: x.remPct,
-      sleepSec: x.totalSleepSec,
-      treated: treatedKeys.has(x.dateKey)
-    }))
+      on: treated ? whole : null,
+      off: treated ? null : whole
+    };
+  }).filter(r => r.on || r.off)
     .sort((a, b) => a.key.localeCompare(b.key));
 
   if (rows.length < 2) return null;
 
-  const scale = scales(rows.map(r => r.pct), w, h, { headroom: 1.25 });
+  const values = rows.flatMap(r => [r.on?.deepRemPct, r.off?.deepRemPct])
+    .filter(v => v != null);
+  if (!values.length) return null;
+
+  const scale = scales(values, w, h, { headroom: 1.25 });
   const svg = svgRoot(w, h, 'chart');
   svg.appendChild(gridAndAxis(scale, w, h, i18n, 4, v => `${i18n.num(v, 0)}%`));
 
   const n = rows.length;
-  const bw = scale.bw(n);
+  const full = scale.bw(n);
+  const bw = full / 2;
 
-  // Group averages as reference lines, so a single night can be read against
-  // the pattern it belongs to. Only drawn when both groups are substantial.
+  // Group averages as dashed references, so one night reads against the
+  // pattern it belongs to.
   if (s.comparable) {
     const avgs = [
       { v: s.treated.deepRemPct, cls: 'avg-treated', label: i18n.t('sleepWithCpap') },
       { v: s.untreated.deepRemPct, cls: 'avg-untreated', label: i18n.t('sleepWithoutCpap') }
-    ].filter(g => g.v != null);
+    ].filter(g => g.v != null).sort((a, b) => b.v - a.v);
 
-    // When the two averages are close their labels would print on top of each
-    // other, which is exactly the case a reader most wants to read. Sort by
-    // value and push the lower label down when they crowd.
-    avgs.sort((a, b) => b.v - a.v);
     let lastLabelY = -Infinity;
     for (const g of avgs) {
       const y = scale.y(g.v);
@@ -826,9 +865,6 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 250 } = 
       let labelY = y - 4;
       if (labelY - lastLabelY < 13) labelY = lastLabelY + 13;
       lastLabelY = labelY;
-      // Anchored at the left edge of the plot: the right edge is where the
-      // last bars sit, and a label pushed down to avoid its neighbour would
-      // otherwise be clipped by the chart border.
       svg.appendChild(el('text', {
         x: PAD.left + 4, y: labelY, class: `threshold-label ${g.cls}-text`,
         'text-anchor': 'start'
@@ -837,24 +873,27 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 250 } = 
   }
 
   rows.forEach((r, i) => {
-    const y = scale.y(r.pct);
-    const bar = el('rect', {
-      x: scale.bx(i, n) - bw / 2, y, width: bw,
-      height: Math.max(1, scale.y(scale.min) - y), rx: 2,
-      class: `bar ${r.treated ? 'bar-cpap' : 'bar-nocpap'}`
-    });
-    tooltipTitle(bar,
-      `${i18n.date(r.dateObj)} — ${r.treated ? i18n.t('sleepWithCpap') : i18n.t('sleepWithoutCpap')}` +
-      `
-${i18n.t('sleepRestorative')}: ${i18n.num(r.pct)}%` +
-      `
-${i18n.t('sleepDeep')}: ${i18n.num(r.deep)}%  ·  ${i18n.t('sleepRem')}: ${i18n.num(r.rem)}%` +
-      `
-${i18n.t('sleepAsleep')} ${i18n.duration(r.sleepSec)}` +
-      `
-
-${i18n.t('gSleepRestorative')}`);
-    svg.appendChild(bar);
+    // With-CPAP takes the left half of the slot, without-CPAP the right, so
+    // the pair reads the same way on every night even when one side is absent.
+    const pairs = [
+      { d: r.on, x: scale.bx(i, n) - bw, cls: 'bar-cpap', label: i18n.t('sleepWithCpap') },
+      { d: r.off, x: scale.bx(i, n), cls: 'bar-nocpap', label: i18n.t('sleepWithoutCpap') }
+    ];
+    for (const p of pairs) {
+      if (!p.d || p.d.deepRemPct == null) continue;
+      const y = scale.y(p.d.deepRemPct);
+      const bar = el('rect', {
+        x: p.x, y, width: bw, height: Math.max(1, scale.y(scale.min) - y),
+        rx: 2, class: `bar ${p.cls}`
+      });
+      tooltipTitle(bar,
+        `${i18n.date(r.dateObj)} — ${p.label}` +
+        `\n${i18n.t('sleepRestorative')}: ${i18n.num(p.d.deepRemPct)}%` +
+        `\n${i18n.t('sleepDeep')}: ${i18n.num(p.d.deepPct)}%  ·  ${i18n.t('sleepRem')}: ${i18n.num(p.d.remPct)}%` +
+        `\n${i18n.t('sleepAsleep')} ${i18n.duration(p.d.sleepSec)}` +
+        `\n\n${i18n.t('gSleepRestorative')}`);
+      svg.appendChild(bar);
+    }
   });
 
   svg.appendChild(xLabels(scale, n, rows.map(r => [
