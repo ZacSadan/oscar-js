@@ -31,6 +31,8 @@
      The translucent band sits behind the timing candles; the solid bar stands
      beside the usage bars. */
   --sleep-band: rgba(120, 130, 145, .28);
+  /* Faintest of the three: whole coloured bars are drawn on top of this. */
+  --sleep-back: rgba(120, 130, 145, .20);
   --sleep-bar: #9aa3b0;
   --sleep-deep: #3f5c8a;
   --sleep-rem: #7a9cc6;
@@ -62,6 +64,7 @@
     --info: #b6bec8;
     --info-soft: #22272c;
     --sleep-band: rgba(150, 160, 175, .24);
+    --sleep-back: rgba(150, 160, 175, .18);
     --sleep-bar: #767f8c;
     --sleep-deep: #6f93c8;
     --sleep-rem: #a9c4e2;
@@ -500,12 +503,34 @@ main { padding-block: 26px 40px; }
    and low-contrast: it is context for the therapy blocks, not a competing
    series, and it must never be mistaken for CPAP data. */
 .sleep-band { fill: var(--sleep-band); }
+/* Sleep duration behind the AHI bars, scaled to the longest night rather than
+   to the y axis, which measures events per hour. */
+.sleep-back { fill: var(--sleep-back); }
 /* The sleep bar standing beside each therapy bar on the usage chart. Solid
    rather than translucent — it is a peer of the bar next to it, not a
    backdrop — but grey, because it comes from a different device. */
 .bar-sleep { fill: var(--sleep-bar); }
 .seg-deep   { fill: var(--sleep-deep); }
 .seg-rem    { fill: var(--sleep-rem); }
+
+/* Restorative sleep per night: a night on therapy against one without. The
+   two must be told apart at a glance, so they take the accent blue and a
+   neutral grey rather than two shades of the same hue. */
+.bar-cpap   { fill: var(--sleep-deep); }
+.bar-nocpap { fill: var(--sleep-bar); }
+.avg-line {
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  fill: none;
+}
+.avg-treated   { stroke: var(--sleep-deep); }
+.avg-untreated { stroke: var(--sleep-bar); }
+/* The two average labels sit close together, so each takes its series colour
+   rather than the default threshold red. */
+.avg-treated-text   { fill: var(--sleep-deep); }
+.avg-untreated-text { fill: var(--sleep-bar); }
+.swatch.bar-cpap   { background: var(--sleep-deep); }
+.swatch.bar-nocpap { background: var(--sleep-bar); }
 
 /* Midnight is the line every night crosses, so it is drawn solid. */
 .midnight-line { stroke: var(--accent); stroke-width: 1; opacity: .45; }

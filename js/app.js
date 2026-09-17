@@ -523,13 +523,14 @@ function renderCharts (r) {
     box.appendChild(fig);
   };
 
-  add('chartAhi', ahiChart(r.nights, i18n));
+  add('chartAhi', ahiChart(r.nights, i18n, { sleep: r.sleep }));
   // The usage chart gains a second bar per night once sleep data is present,
   // so it also gains a legend; usageLegend returns null when it is not needed.
-  add('chartUsage', usageChart(r.nights, i18n), usageLegend(r.nights, i18n));
+  add('chartUsage', usageChart(r.nights, i18n, { sleep: r.sleep }),
+    usageLegend(r, i18n));
   // With watch data present the timing chart gains a grey sleep band, so the
   // caption has to explain it.
-  add('chartTiming', sleepTimingChart(r.nights, i18n), null,
+  add('chartTiming', sleepTimingChart(r.nights, i18n, { sleep: r.sleep }), null,
     r.sleep?.matched ? 'chartTimingHintSleep' : 'chartTimingHint');
 
   // Restorative-sleep comparison, only when both groups have enough nights to

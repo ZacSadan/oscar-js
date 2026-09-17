@@ -77,7 +77,7 @@ function gridAndAxis (s, w, h, i18n, ticks = 4, fmt = v => i18n.num(v, 0)) {
  * separators land in the wrong places. Placeholders carry `missing: true` and
  * zeroed metrics, so they render as an empty slot on the axis.
  */
-function fillMissingDays (nights) {
+function fillMissingDays (nights, sleepByKey = null) {
   if (nights.length < 2) return nights.map(n => ({ ...n, missing: false }));
 
   const byKey = new Map();
@@ -111,7 +111,11 @@ function fillMissingDays (nights) {
         obstructiveApneaCount: 0, centralApneaCount: 0,
         hypopneaCount: 0, reraCount: 0, snoreCount: 0,
         largeLeakCount: 0, sessionCount: 0,
-        pressureP95: null, pressureMedian: null
+        pressureP95: null, pressureMedian: null,
+        // A night with no therapy can still have been slept: the watch was
+        // recording even when the machine was not. Attaching it here is what
+        // lets the grey appear on a night the card knows nothing about.
+        sleep: sleepByKey?.get(key) || null
       });
     }
     cur.setDate(cur.getDate() + 1);
@@ -239,9 +243,15 @@ function tooltipTitle (node, text) {
 /* ---------------------------------------------------------------------------
  * AHI per night, with the clinical threshold marked.
  * -------------------------------------------------------------------------*/
-export function ahiChart (nights, i18n, { w = 720, h = 220 } = {}) {
+export function ahiChart (nights, i18n, { w = 720, h = 220, sleep = null } = {}) {
   if (nights.filter(n => n.hours > 0).length < 2) return null;
-  const data = fillMissingDays(nights);
+  // Sleep is keyed by night so a day the card never recorded can still show
+  // its grey bar — those are exactly the nights worth seeing here, because
+  // they are the ones slept without therapy.
+  const sleepByKey = sleep?.nights?.length
+    ? new Map(sleep.nights.map(x => [x.dateKey, x]))
+    : null;
+  const data = fillMissingDays(nights, sleepByKey);
   const values = data.filter(n => n.hours > 0).map(n => n.ahi);
   const s = scales([...values, 5], w, h);
   const svg = svgRoot(w, h, 'chart');
@@ -251,10 +261,34 @@ export function ahiChart (nights, i18n, { w = 720, h = 220 } = {}) {
   thresholdLine(svg, s, w, 5, i18n.t('thresholdLine'));
 
   const n = data.length;
-  // No sleep overlay here: this axis is events per hour, which sleep hours
-  // cannot share, so any sleep drawn against it would be a shape with no
-  // readable scale. Sleep is shown on the usage and timing charts instead,
-  // where the axis actually means something for it.
+
+  // Sleep duration behind each bar.
+  //
+  // This axis is events per hour, which sleep hours cannot share, so the band
+  // is drawn PROPORTIONALLY: the longest sleep in the period fills the plot
+  // and the rest scale against it. It answers "did I sleep more or less than
+  // usual that night" alongside the AHI, and is deliberately not something to
+  // read off the y axis — the tooltip carries the actual hours.
+  const sleepSecs = data.filter(d => d.sleep).map(d => d.sleep.totalSleepSec);
+  const maxSleep = sleepSecs.length ? Math.max(...sleepSecs) : 0;
+  if (maxSleep > 0) {
+    const plotTop = PAD.top;
+    const plotBottom = s.y(s.min);
+    data.forEach((night, i) => {
+      if (!night.sleep || night.sleep.totalSleepSec <= 0) return;
+      const frac = night.sleep.totalSleepSec / maxSleep;
+      const bandH = (plotBottom - plotTop) * frac;
+      const bwBand = s.bw(n) * 1.5;
+      const band = el('rect', {
+        x: s.bx(i, n) - bwBand / 2, y: plotBottom - bandH, width: bwBand,
+        height: Math.max(1, bandH), rx: 2, class: 'sleep-back'
+      });
+      tooltipTitle(band,
+        `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
+        `${i18n.duration(night.sleep.totalSleepSec)}\n\n${i18n.t('gSleepRelative')}`);
+      svg.appendChild(band);
+    });
+  }
 
   data.forEach((night, i) => {
     const bw = s.bw(n);
@@ -291,9 +325,14 @@ ${i18n.t('gAhi')}`);
 /* ---------------------------------------------------------------------------
  * Usage hours per night, with the 4-hour benchmark.
  * -------------------------------------------------------------------------*/
-export function usageChart (nights, i18n, { w = 720, h = 200 } = {}) {
+export function usageChart (nights, i18n, { w = 720, h = 200, sleep = null } = {}) {
   if (nights.length < 2) return null;
-  const data = fillMissingDays(nights);
+  // As on the AHI chart: a night the card never saw can still have a sleep
+  // bar, which is the whole point of pairing the two series.
+  const sleepByKey = sleep?.nights?.length
+    ? new Map(sleep.nights.map(x => [x.dateKey, x]))
+    : null;
+  const data = fillMissingDays(nights, sleepByKey);
   const values = data.map(n => n.totalSec / 3600);
   // Sleep hours share this axis exactly — both are hours — so the watch data
   // is included in the scale to keep a long sleep from overflowing the plot.
@@ -361,8 +400,8 @@ ${i18n.t('gUsage')}`);
  * Returns null when there is no sleep data, so the caller can append it
  * unconditionally.
  */
-export function usageLegend (nights, i18n) {
-  if (!nights.some(n => n.sleep && n.sleep.totalSleepSec > 0)) return null;
+export function usageLegend (report, i18n) {
+  if (!report.sleep?.nights?.some(x => x.totalSleepSec > 0)) return null;
   const wrap = document.createElement('div');
   wrap.className = 'legend';
   for (const c of [
@@ -500,11 +539,14 @@ ${i18n.t('gP95')}`);
  * The y axis runs from midday to midday so a night is one continuous span
  * instead of being cut in half at midnight.
  * -------------------------------------------------------------------------*/
-export function sleepTimingChart (nights, i18n, { w = 720, h = 260 } = {}) {
+export function sleepTimingChart (nights, i18n, { w = 720, h = 260, sleep = null } = {}) {
   const timed = nights.filter(n => n.bedtime && n.wake);
   if (timed.length < 2) return null;
 
-  const data = fillMissingDays(nights);
+  const sleepByKey = sleep?.nights?.length
+    ? new Map(sleep.nights.map(x => [x.dateKey, x]))
+    : null;
+  const data = fillMissingDays(nights, sleepByKey);
   const n = data.length;
 
   // Axis bounds in hours-from-noon, padded to whole hours and clamped to the
@@ -519,7 +561,9 @@ export function sleepTimingChart (nights, i18n, { w = 720, h = 260 } = {}) {
   }
   // Watch sleep often begins before the mask goes on and ends after it comes
   // off, so the axis has to cover it too or the grey band would be clipped.
-  for (const night of nights) {
+  // Walking `data` rather than `nights` includes the sleep-only days, whose
+  // bands would otherwise fall outside the bounds entirely.
+  for (const night of data) {
     if (!night.sleep?.start) continue;
     const a = hoursFromNoon(night.sleep.start);
     const b = a + (night.sleep.inBedSec || night.sleep.totalSleepSec) / 3600;
@@ -717,82 +761,121 @@ export function waveformChart (samples, hz, i18n, { w = 720, h = 150, label = ''
 }
 
 /* ---------------------------------------------------------------------------
- * Restorative sleep (REM + deep) on therapy nights vs nights without.
+ * Restorative sleep per night: (REM + deep) as a share of that night's sleep,
+ * with each night coloured by whether CPAP was used.
  *
- * IMPORTANT: this is an OBSERVATIONAL comparison, not a controlled one. The
- * untreated group is simply "nights the watch saw sleep and the card did not",
- * which skews toward travel, illness and nights off — each of which changes
- * sleep architecture on its own. The chart therefore always shows the number
- * of nights behind each bar, and the caller suppresses it entirely below three
- * nights a side.
+ * Showing every night rather than two averages is the point. Sleep
+ * architecture varies a lot from night to night, and two summary bars hide
+ * both the spread and any trend — a reader cannot tell whether a gap is a
+ * consistent pattern or one unusual night dragging an average.
+ *
+ * IMPORTANT: this remains OBSERVATIONAL. A night counts as untreated simply
+ * because the watch recorded sleep and the card did not, which skews toward
+ * travel, illness and nights off, each of which changes sleep on its own.
+ * The caller shows that caveat, and the group averages are drawn as reference
+ * lines only when there are enough nights on both sides to be worth comparing.
  * -------------------------------------------------------------------------*/
 export function sleepStageComparisonChart (report, i18n, { w = 720, h = 250 } = {}) {
   const s = report.sleep;
-  if (!s || !s.comparable) return null;
+  if (!s || !s.nights?.length) return null;
 
-  const groups = [
-    { key: 'treated',   label: i18n.t('sleepWithCpap'),    d: s.treated,   cls: 'bar-good' },
-    { key: 'untreated', label: i18n.t('sleepWithoutCpap'), d: s.untreated, cls: 'bar-warn' }
-  ];
+  // Every sleep night in date order, tagged with whether the card recorded
+  // therapy for it. Nights the watch never saw cannot appear at all.
+  const treatedKeys = new Set(
+    report.nights.filter(n => n.totalSec > 0).map(n => n.date));
+  const rows = s.nights
+    .filter(x => x.deepRemPct != null)
+    .map(x => ({
+      key: x.dateKey,
+      dateObj: keyToDateLocal(x.dateKey),
+      pct: x.deepRemPct,
+      deep: x.deepPct,
+      rem: x.remPct,
+      sleepSec: x.totalSleepSec,
+      treated: treatedKeys.has(x.dateKey)
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
 
-  const values = groups.map(g => g.d.deepRemPct).filter(v => v != null);
-  if (values.length < 2) return null;
+  if (rows.length < 2) return null;
 
-  const scale = scales([...values, 100], w, h, { headroom: 1 });
+  const scale = scales(rows.map(r => r.pct), w, h, { headroom: 1.25 });
   const svg = svgRoot(w, h, 'chart');
   svg.appendChild(gridAndAxis(scale, w, h, i18n, 4, v => `${i18n.num(v, 0)}%`));
 
-  const innerW = w - PAD.left - PAD.right;
-  const n = groups.length;
-  const bw = Math.min(140, (innerW / n) * 0.5);
+  const n = rows.length;
+  const bw = scale.bw(n);
 
-  groups.forEach((g, i) => {
-    // Centre the pair rather than spreading them the full plot width, which
-    // would put two lonely bars at opposite edges.
-    const x = PAD.left + innerW * ((i + 0.5) / n);
-    const v = g.d.deepRemPct;
-    if (v == null) return;
-    const yTop = scale.y(v);
+  // Group averages as reference lines, so a single night can be read against
+  // the pattern it belongs to. Only drawn when both groups are substantial.
+  if (s.comparable) {
+    const avgs = [
+      { v: s.treated.deepRemPct, cls: 'avg-treated', label: i18n.t('sleepWithCpap') },
+      { v: s.untreated.deepRemPct, cls: 'avg-untreated', label: i18n.t('sleepWithoutCpap') }
+    ].filter(g => g.v != null);
 
-    // Stacked: deep at the bottom, REM above it, so the split is visible and
-    // the total still reads as one bar height.
-    let acc = 0;
-    for (const part of [
-      { v: g.d.deepPct, cls: 'seg-deep', label: i18n.t('sleepDeep') },
-      { v: g.d.remPct,  cls: 'seg-rem',  label: i18n.t('sleepRem') }
-    ]) {
-      if (part.v == null || part.v <= 0) continue;
-      const y0 = scale.y(acc), y1 = scale.y(acc + part.v);
-      const rect = el('rect', {
-        x: x - bw / 2, y: y1, width: bw, height: Math.max(1, y0 - y1),
-        rx: 2, class: `bar ${part.cls}`
-      });
-      tooltipTitle(rect, `${part.label} — ${g.label}: ${i18n.num(part.v)}%`);
-      svg.appendChild(rect);
-      acc += part.v;
+    // When the two averages are close their labels would print on top of each
+    // other, which is exactly the case a reader most wants to read. Sort by
+    // value and push the lower label down when they crowd.
+    avgs.sort((a, b) => b.v - a.v);
+    let lastLabelY = -Infinity;
+    for (const g of avgs) {
+      const y = scale.y(g.v);
+      svg.appendChild(el('line', {
+        x1: PAD.left, x2: w - PAD.right, y1: y, y2: y, class: `avg-line ${g.cls}`
+      }));
+      let labelY = y - 4;
+      if (labelY - lastLabelY < 13) labelY = lastLabelY + 13;
+      lastLabelY = labelY;
+      // Anchored at the left edge of the plot: the right edge is where the
+      // last bars sit, and a label pushed down to avoid its neighbour would
+      // otherwise be clipped by the chart border.
+      svg.appendChild(el('text', {
+        x: PAD.left + 4, y: labelY, class: `threshold-label ${g.cls}-text`,
+        'text-anchor': 'start'
+      }, `${g.label} ${i18n.num(g.v, 0)}%`));
     }
+  }
 
-    // Total above the bar, with the night count that produced it.
-    svg.appendChild(el('text', {
-      x, y: yTop - 8, class: 'donut-value', 'text-anchor': 'middle'
-    }, `${i18n.num(v)}%`));
-    svg.appendChild(el('text', {
-      x, y: h - PAD.bottom + 16, class: 'tick', 'text-anchor': 'middle'
-    }, g.label));
-    svg.appendChild(el('text', {
-      x, y: h - PAD.bottom + 30, class: 'tick tick-weekday', 'text-anchor': 'middle'
-    }, `${i18n.int(g.d.count)} ${i18n.t(g.d.count === 1 ? 'sleepNight' : 'sleepNights')}`));
+  rows.forEach((r, i) => {
+    const y = scale.y(r.pct);
+    const bar = el('rect', {
+      x: scale.bx(i, n) - bw / 2, y, width: bw,
+      height: Math.max(1, scale.y(scale.min) - y), rx: 2,
+      class: `bar ${r.treated ? 'bar-cpap' : 'bar-nocpap'}`
+    });
+    tooltipTitle(bar,
+      `${i18n.date(r.dateObj)} — ${r.treated ? i18n.t('sleepWithCpap') : i18n.t('sleepWithoutCpap')}` +
+      `
+${i18n.t('sleepRestorative')}: ${i18n.num(r.pct)}%` +
+      `
+${i18n.t('sleepDeep')}: ${i18n.num(r.deep)}%  ·  ${i18n.t('sleepRem')}: ${i18n.num(r.rem)}%` +
+      `
+${i18n.t('sleepAsleep')} ${i18n.duration(r.sleepSec)}` +
+      `
+
+${i18n.t('gSleepRestorative')}`);
+    svg.appendChild(bar);
   });
 
+  svg.appendChild(xLabels(scale, n, rows.map(r => [
+    i18n.weekday(r.dateObj, 'narrow'),
+    i18n.date(r.dateObj, { day: '2-digit', month: '2-digit' })
+  ]), h));
   return svg;
 }
 
+/** YYYYMMDD -> Date, for sleep nights that never matched a card night. */
+function keyToDateLocal (key) {
+  return new Date(+key.slice(0, 4), +key.slice(4, 6) - 1, +key.slice(6, 8));
+}
+
+/** Legend for the per-night restorative-sleep chart: the two night types. */
 export function sleepStageLegend (i18n) {
   const wrap = document.createElement('div');
   wrap.className = 'legend';
   for (const c of [
-    { cls: 'seg-deep', label: i18n.t('sleepDeep'), help: 'gSleepDeep' },
-    { cls: 'seg-rem',  label: i18n.t('sleepRem'),  help: 'gSleepRem' }
+    { cls: 'bar-cpap',   label: i18n.t('sleepWithCpap'),    help: 'gSleepRestorative' },
+    { cls: 'bar-nocpap', label: i18n.t('sleepWithoutCpap'), help: 'gSleepRestorative' }
   ]) {
     const item = document.createElement('span');
     item.className = 'legend-item has-help';
