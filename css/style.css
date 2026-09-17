@@ -26,6 +26,12 @@
   --info: #47515d;
   --info-soft: #eef0f3;
 
+  /* Watch sleep data. Grey on purpose — it is a second, weaker source sitting
+     behind the therapy record, never a peer of it. */
+  --sleep-band: rgba(120, 130, 145, .28);
+  --sleep-deep: #3f5c8a;
+  --sleep-rem: #7a9cc6;
+
   --radius: 10px;
   --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .04);
 
@@ -52,6 +58,9 @@
     --bad-soft: #2b1a19;
     --info: #b6bec8;
     --info-soft: #22272c;
+    --sleep-band: rgba(150, 160, 175, .24);
+    --sleep-deep: #6f93c8;
+    --sleep-rem: #a9c4e2;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4);
   }
 }
@@ -483,6 +492,13 @@ main { padding-block: 26px 40px; }
 .candle-warn { fill: var(--warn); }
 .candle-missing { stroke: var(--text-faint); stroke-width: 2; opacity: .35; }
 
+/* Watch-measured sleep, drawn behind the therapy candle. Deliberately grey
+   and low-contrast: it is context for the therapy blocks, not a competing
+   series, and it must never be mistaken for CPAP data. */
+.sleep-band { fill: var(--sleep-band); }
+.seg-deep   { fill: var(--sleep-deep); }
+.seg-rem    { fill: var(--sleep-rem); }
+
 /* Midnight is the line every night crosses, so it is drawn solid. */
 .midnight-line { stroke: var(--accent); stroke-width: 1; opacity: .45; }
 
@@ -539,6 +555,10 @@ main { padding-block: 26px 40px; }
 .swatch.seg-ca { background: #b3261e; }
 .swatch.seg-hy { background: #6aa2d8; }
 .swatch.seg-re { background: #9a6400; }
+/* Sleep-stage swatches follow the chart tokens, so the legend tracks the
+   theme rather than hard-coding a second copy of the palette. */
+.swatch.seg-deep { background: var(--sleep-deep); }
+.swatch.seg-rem  { background: var(--sleep-rem); }
 
 /* ----------------------------------------------------------------- table */
 
@@ -914,6 +934,88 @@ html[dir="rtl"] .caveat { border-radius: 6px 0 0 6px; }
   .chart-figure { break-inside: avoid; }
   .nights-table { font-size: 9pt; }
   .site-footer { border: 0; }
+}
+
+/* ------------------------------------------------- Withings sleep import */
+
+.withings-panel { margin-block-start: 18px; }
+
+.withings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.withings-status {
+  font-size: .86rem;
+  color: var(--text-soft);
+}
+.withings-status.ok { color: var(--good); }
+.withings-status.err { color: var(--bad); }
+
+/* The credentials form is collapsed until needed: most of the time the reader
+   has already saved them and only wants the button. */
+.withings-setup {
+  margin-block-start: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--info-soft);
+}
+
+.withings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block-end: 10px;
+}
+.withings-field label {
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  letter-spacing: .02em;
+}
+.withings-field input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .85rem;
+  /* Credentials are opaque tokens: never mirror them in RTL. */
+  direction: ltr;
+  text-align: start;
+}
+.withings-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.withings-help {
+  font-size: .8rem;
+  color: var(--text-soft);
+  line-height: 1.55;
+  margin-block: 8px 0;
+}
+.withings-help code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .95em;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  direction: ltr;
+  display: inline-block;
+}
+
+.sleep-compare-note {
+  font-size: .82rem;
+  color: var(--text-soft);
+  line-height: 1.6;
+  margin-block-start: 10px;
+  padding-inline-start: 12px;
+  border-inline-start: 3px solid var(--warn);
 }
 
 /* ------------------------------------------------------------ responsive */

@@ -458,6 +458,15 @@ export function sleepTimingChart (nights, i18n, { w = 720, h = 260 } = {}) {
     if (a < lo) lo = a;
     if (b > hi) hi = b;
   }
+  // Watch sleep often begins before the mask goes on and ends after it comes
+  // off, so the axis has to cover it too or the grey band would be clipped.
+  for (const night of nights) {
+    if (!night.sleep?.start) continue;
+    const a = hoursFromNoon(night.sleep.start);
+    const b = a + (night.sleep.inBedSec || night.sleep.totalSleepSec) / 3600;
+    if (a < lo) lo = a;
+    if (b > hi) hi = b;
+  }
   lo = Math.max(0, Math.floor(lo - 0.5));
   hi = Math.min(24, Math.ceil(hi + 0.5));
   if (hi - lo < 4) hi = Math.min(24, lo + 4);
@@ -516,6 +525,27 @@ export function sleepTimingChart (nights, i18n, { w = 720, h = 260 } = {}) {
     // start is at the bottom of the candle and the end at the top.
     const yStart = y(start);
     const yEnd = y(end);
+
+    // Watch-measured sleep, drawn FIRST so it sits behind the therapy blocks.
+    // A wide grey band spanning the time the watch says you were actually
+    // asleep: where it extends past the therapy block, you slept without the
+    // mask; where the therapy block extends past it, the machine was running
+    // while you were awake.
+    if (night.sleep?.start) {
+      const sleepStart = hoursFromNoon(night.sleep.start);
+      const sleepEnd = sleepStart + (night.sleep.inBedSec || night.sleep.totalSleepSec) / 3600;
+      const yS = y(sleepStart), yE = y(sleepEnd);
+      const band = el('rect', {
+        x: x - bw * 0.85, y: Math.min(yS, yE), width: bw * 1.7,
+        height: Math.max(2, Math.abs(yS - yE)), rx: 2, class: 'sleep-band'
+      });
+      tooltipTitle(band,
+        `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
+        `${i18n.time(night.sleep.start)}–${night.sleep.end ? i18n.time(night.sleep.end) : '—'}` +
+        `\n${i18n.t('sleepAsleep')} ${i18n.duration(night.sleep.totalSleepSec)}` +
+        `\n\n${i18n.t('gSleepBand')}`);
+      svg.appendChild(band);
+    }
 
     // Wick: whole time in bed.
     const wick = el('line', {
@@ -625,6 +655,95 @@ export function waveformChart (samples, hz, i18n, { w = 720, h = 150, label = ''
   }
   svg.appendChild(g);
   return svg;
+}
+
+/* ---------------------------------------------------------------------------
+ * Restorative sleep (REM + deep) on therapy nights vs nights without.
+ *
+ * IMPORTANT: this is an OBSERVATIONAL comparison, not a controlled one. The
+ * untreated group is simply "nights the watch saw sleep and the card did not",
+ * which skews toward travel, illness and nights off — each of which changes
+ * sleep architecture on its own. The chart therefore always shows the number
+ * of nights behind each bar, and the caller suppresses it entirely below three
+ * nights a side.
+ * -------------------------------------------------------------------------*/
+export function sleepStageComparisonChart (report, i18n, { w = 720, h = 250 } = {}) {
+  const s = report.sleep;
+  if (!s || !s.comparable) return null;
+
+  const groups = [
+    { key: 'treated',   label: i18n.t('sleepWithCpap'),    d: s.treated,   cls: 'bar-good' },
+    { key: 'untreated', label: i18n.t('sleepWithoutCpap'), d: s.untreated, cls: 'bar-warn' }
+  ];
+
+  const values = groups.map(g => g.d.deepRemPct).filter(v => v != null);
+  if (values.length < 2) return null;
+
+  const scale = scales([...values, 100], w, h, { headroom: 1 });
+  const svg = svgRoot(w, h, 'chart');
+  svg.appendChild(gridAndAxis(scale, w, h, i18n, 4, v => `${i18n.num(v, 0)}%`));
+
+  const innerW = w - PAD.left - PAD.right;
+  const n = groups.length;
+  const bw = Math.min(140, (innerW / n) * 0.5);
+
+  groups.forEach((g, i) => {
+    // Centre the pair rather than spreading them the full plot width, which
+    // would put two lonely bars at opposite edges.
+    const x = PAD.left + innerW * ((i + 0.5) / n);
+    const v = g.d.deepRemPct;
+    if (v == null) return;
+    const yTop = scale.y(v);
+
+    // Stacked: deep at the bottom, REM above it, so the split is visible and
+    // the total still reads as one bar height.
+    let acc = 0;
+    for (const part of [
+      { v: g.d.deepPct, cls: 'seg-deep', label: i18n.t('sleepDeep') },
+      { v: g.d.remPct,  cls: 'seg-rem',  label: i18n.t('sleepRem') }
+    ]) {
+      if (part.v == null || part.v <= 0) continue;
+      const y0 = scale.y(acc), y1 = scale.y(acc + part.v);
+      const rect = el('rect', {
+        x: x - bw / 2, y: y1, width: bw, height: Math.max(1, y0 - y1),
+        rx: 2, class: `bar ${part.cls}`
+      });
+      tooltipTitle(rect, `${part.label} — ${g.label}: ${i18n.num(part.v)}%`);
+      svg.appendChild(rect);
+      acc += part.v;
+    }
+
+    // Total above the bar, with the night count that produced it.
+    svg.appendChild(el('text', {
+      x, y: yTop - 8, class: 'donut-value', 'text-anchor': 'middle'
+    }, `${i18n.num(v)}%`));
+    svg.appendChild(el('text', {
+      x, y: h - PAD.bottom + 16, class: 'tick', 'text-anchor': 'middle'
+    }, g.label));
+    svg.appendChild(el('text', {
+      x, y: h - PAD.bottom + 30, class: 'tick tick-weekday', 'text-anchor': 'middle'
+    }, `${i18n.int(g.d.count)} ${i18n.t(g.d.count === 1 ? 'sleepNight' : 'sleepNights')}`));
+  });
+
+  return svg;
+}
+
+export function sleepStageLegend (i18n) {
+  const wrap = document.createElement('div');
+  wrap.className = 'legend';
+  for (const c of [
+    { cls: 'seg-deep', label: i18n.t('sleepDeep'), help: 'gSleepDeep' },
+    { cls: 'seg-rem',  label: i18n.t('sleepRem'),  help: 'gSleepRem' }
+  ]) {
+    const item = document.createElement('span');
+    item.className = 'legend-item has-help';
+    item.title = `${c.label}\n\n${i18n.t(c.help)}`;
+    const sw = document.createElement('i');
+    sw.className = `swatch ${c.cls}`;
+    item.append(sw, document.createTextNode(c.label));
+    wrap.appendChild(item);
+  }
+  return wrap;
 }
 
 /* ---------------------------------------------------------------------------

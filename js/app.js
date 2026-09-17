@@ -10,8 +10,13 @@ import {
 import { ahiBand, MIN_SESSION_SEC } from './analysis.js';
 import {
   ahiChart, usageChart, compositionChart, compositionLegend,
-  pressureChart, sleepTimingChart, waveformChart, mixDonut
+  pressureChart, sleepTimingChart, waveformChart, mixDonut,
+  sleepStageComparisonChart, sleepStageLegend
 } from './charts.js';
+import {
+  loadCredentials, saveCredentials, clearCredentials, redirectUri,
+  authorize, exchangeCode, fetchSleepSummary, attachSleep
+} from './withings.js';
 
 let i18n = makeI18n(detectLanguage());
 let report = null;
@@ -208,6 +213,7 @@ async function run (entries) {
 function render (r) {
   renderDevice(r);
   renderSummary(r);
+  renderWithings(r);
   renderInsights(r);
   renderCharts(r);
   renderTable(r);
@@ -292,6 +298,165 @@ function bandClass (ahi) {
   return b === 'normal' ? 'good' : b === 'mild' ? 'warn' : 'bad';
 }
 
+/* ---------------------------------------------------------------------------
+ * Withings sleep import
+ *
+ * Opt-in and self-contained: nothing here runs unless the reader clicks, and
+ * the CPAP report is complete without it. Credentials belong to the reader and
+ * live only in their own localStorage — see withings.js for why they have to
+ * be supplied by hand at all.
+ * -------------------------------------------------------------------------*/
+
+function renderWithings (r) {
+  const box = $('#withings');
+  box.replaceChildren();
+  box.className = 'panel no-print withings-panel';
+
+  box.append(
+    h('h2', null, i18n.t('withingsTitle')),
+    h('p', 'muted', i18n.t('withingsIntro'))
+  );
+
+  const row = h('div', 'withings-row');
+  const connectBtn = h('button', 'primary-btn', i18n.t('withingsConnect'));
+  connectBtn.type = 'button';
+  const setupBtn = h('button', 'ghost-btn', i18n.t('withingsSetup'));
+  setupBtn.type = 'button';
+  const status = h('span', 'withings-status');
+  row.append(connectBtn, setupBtn, status);
+  box.appendChild(row);
+
+  const setup = buildWithingsSetup(status);
+  setup.hidden = true;
+  box.appendChild(setup);
+
+  setupBtn.addEventListener('click', () => {
+    setup.hidden = !setup.hidden;
+    setupBtn.textContent = i18n.t(setup.hidden ? 'withingsSetup' : 'withingsSetupHide');
+  });
+
+  connectBtn.addEventListener('click', async () => {
+    const creds = loadCredentials();
+    if (!creds) {
+      // Nothing saved yet: open the form rather than failing silently.
+      setup.hidden = false;
+      setupBtn.textContent = i18n.t('withingsSetupHide');
+      setStatus(status, i18n.t('withingsNeedCreds'), 'err');
+      return;
+    }
+    connectBtn.disabled = true;
+    try {
+      setStatus(status, i18n.t('withingsConnecting'));
+      const code = await authorize(creds.clientId);
+
+      // The authorization code is valid for THIRTY SECONDS, so the exchange
+      // follows immediately with nothing in between.
+      setStatus(status, i18n.t('withingsFetching'));
+      const token = await exchangeCode(code, creds);
+
+      const first = report.nights[0]?.dateObj;
+      const last = report.nights[report.nights.length - 1]?.dateObj;
+      const series = await fetchSleepSummary(
+        token.access_token, ymd(first), ymd(last));
+
+      attachSleep(report, series);
+      if (!report.sleep.matched) {
+        setStatus(status, i18n.t('withingsNoMatch'), 'err');
+      } else {
+        setStatus(status, i18n.t('withingsMatched', {
+          n: report.sleep.matched, total: report.nights.length
+        }), 'ok');
+      }
+      // Re-render so the charts pick up the sleep data.
+      renderCharts(report);
+      renderTable(report);
+    } catch (err) {
+      setStatus(status, withingsError(err), 'err');
+      console.error(err);
+    } finally {
+      connectBtn.disabled = false;
+    }
+  });
+}
+
+function buildWithingsSetup (status) {
+  const wrap = h('div', 'withings-setup');
+  const saved = loadCredentials();
+
+  const field = (labelKey, value, type = 'text') => {
+    const f = h('div', 'withings-field');
+    const id = `withings-${labelKey}`;
+    const label = h('label', null, i18n.t(labelKey));
+    label.htmlFor = id;
+    const input = document.createElement('input');
+    input.id = id;
+    input.type = type;
+    input.value = value || '';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    f.append(label, input);
+    return { f, input };
+  };
+
+  const id = field('withingsClientId', saved?.clientId);
+  const secret = field('withingsClientSecret', saved?.clientSecret, 'password');
+  wrap.append(id.f, secret.f);
+
+  const btns = h('div', 'withings-row');
+  const save = h('button', 'ghost-btn', i18n.t('withingsSave'));
+  save.type = 'button';
+  const forget = h('button', 'ghost-btn', i18n.t('withingsForget'));
+  forget.type = 'button';
+  btns.append(save, forget);
+  wrap.appendChild(btns);
+
+  save.addEventListener('click', () => {
+    if (!id.input.value.trim() || !secret.input.value.trim()) {
+      setStatus(status, i18n.t('withingsNeedCreds'), 'err');
+      return;
+    }
+    saveCredentials(id.input.value, secret.input.value);
+    setStatus(status, i18n.t('withingsSaved'), 'ok');
+  });
+
+  forget.addEventListener('click', () => {
+    clearCredentials();
+    id.input.value = '';
+    secret.input.value = '';
+    setStatus(status, '');
+  });
+
+  // The callback URL has to match Withings' registration exactly, so it is
+  // shown rather than described.
+  const help = h('p', 'withings-help');
+  const parts = i18n.t('withingsHelp').split('{uri}');
+  help.append(parts[0] || '', h('code', null, redirectUri()), parts[1] || '');
+  wrap.appendChild(help);
+  wrap.appendChild(h('p', 'withings-help', i18n.t('withingsScopeNote')));
+
+  return wrap;
+}
+
+function setStatus (node, text, cls = '') {
+  node.textContent = text;
+  node.className = `withings-status${cls ? ' ' + cls : ''}`;
+}
+
+/** Map a thrown error to a message the reader can act on. */
+function withingsError (err) {
+  const m = err?.message || '';
+  if (m === 'popup-blocked') return i18n.t('withingsErrPopup');
+  if (m === 'cancelled') return i18n.t('withingsErrCancelled');
+  if (m === 'timeout') return i18n.t('withingsErrTimeout');
+  if (m === 'rate-limited') return i18n.t('withingsErrRate');
+  return i18n.t('withingsErrGeneric', { msg: m || '?' });
+}
+
+function ymd (d) {
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function renderInsights (r) {
   const box = $('#insights');
   box.replaceChildren();
@@ -359,7 +524,26 @@ function renderCharts (r) {
 
   add('chartAhi', ahiChart(r.nights, i18n));
   add('chartUsage', usageChart(r.nights, i18n));
-  add('chartTiming', sleepTimingChart(r.nights, i18n), null, 'chartTimingHint');
+  // With watch data present the timing chart gains a grey sleep band, so the
+  // caption has to explain it.
+  add('chartTiming', sleepTimingChart(r.nights, i18n), null,
+    r.sleep?.matched ? 'chartTimingHintSleep' : 'chartTimingHint');
+
+  // Restorative-sleep comparison, only when both groups have enough nights to
+  // be worth putting side by side.
+  const stages = sleepStageComparisonChart(r, i18n);
+  if (stages) {
+    const fig = h('figure', 'chart-figure');
+    fig.append(
+      h('figcaption', null, i18n.t('chartSleepStages')),
+      h('p', 'chart-hint', i18n.t('chartSleepStagesHint')),
+      stages,
+      sleepStageLegend(i18n),
+      h('p', 'sleep-compare-note', i18n.t('sleepCompareCaveat'))
+    );
+    box.appendChild(fig);
+  }
+
   add('chartComposition', compositionChart(r.nights, i18n), compositionLegend(i18n));
   add('chartPressure', pressureChart(r.nights, i18n));
 
