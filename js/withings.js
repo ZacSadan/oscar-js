@@ -73,9 +73,18 @@ export function clearCredentials () {
   try { localStorage.removeItem(STORE_KEY); } catch { /* nothing to undo */ }
 }
 
-/** The callback must exactly match what is registered with Withings. */
+/**
+ * The callback must match what is registered with Withings exactly.
+ *
+ * `index.html` is normalised away: the directory form is what a reader
+ * naturally registers, it is what the server serves at that path anyway, and
+ * keeping the two spellings apart is a classic source of redirect_uri
+ * mismatch errors. Any query or fragment is dropped for the same reason —
+ * during the callback the URL still carries ?code=..., and echoing that back
+ * as the redirect_uri would never match.
+ */
 export function redirectUri () {
-  return location.origin + location.pathname;
+  return location.origin + location.pathname.replace(/index\.html?$/i, '');
 }
 
 /* ---------------------------------------------------------------------------
@@ -83,12 +92,77 @@ export function redirectUri () {
  * -------------------------------------------------------------------------*/
 
 /**
+ * Runs FIRST, before anything else boots.
+ *
+ * Withings sends the browser back to this same page carrying ?code=... — so
+ * the popup would otherwise load a second full copy of the analyzer, re-run
+ * its setup and repaint the whole UI, all to be thrown away a moment later.
+ * Worse, the opener cannot reliably read the popup's URL while that is
+ * happening.
+ *
+ * So when this page notices it IS the OAuth callback, it stops being the app:
+ * it hands the code to its opener over postMessage, shows one line of text,
+ * and closes itself. Returns true when that happened, and the caller must
+ * then do nothing else.
+ */
+export function handleOAuthCallback () {
+  let params;
+  try { params = new URL(location.href).searchParams; } catch { return false; }
+  const code = params.get('code');
+  const error = params.get('error');
+  const state = params.get('state');
+  if (!code && !error) return false;               // an ordinary page load
+
+  const payload = { source: 'withings-oauth', code, error, state };
+  let delivered = false;
+  try {
+    if (window.opener && !window.opener.closed) {
+      // Target our own origin explicitly rather than '*', so the code is
+      // never broadcast to a document we did not open.
+      window.opener.postMessage(payload, location.origin);
+      delivered = true;
+    }
+  } catch { /* opener gone or cross-origin; fall through to the manual note */ }
+
+  showCallbackNotice(delivered, error);
+  if (delivered) setTimeout(() => { try { window.close(); } catch { /* ignore */ } }, 400);
+  return true;
+}
+
+/**
+ * Replace the document with a single status line. The popup is on screen for
+ * well under a second in the normal case, but it must not flash a half-built
+ * report in the meantime, and it must say something useful if it cannot close
+ * itself (opened in a tab rather than a popup, for instance).
+ */
+function showCallbackNotice (delivered, error) {
+  const he = (navigator.language || '').toLowerCase().startsWith('he');
+  const msg = error
+    ? (he ? 'ההתחברות נכשלה. אפשר לסגור את החלון.' : 'Sign-in failed. You can close this window.')
+    : delivered
+      ? (he ? 'מתחבר… החלון ייסגר מיד.' : 'Connected. Closing…')
+      : (he ? 'ההתחברות הושלמה. סגור את החלון הזה וחזור לדוח.'
+            : 'Sign-in complete. Close this window and return to the report.');
+
+  document.documentElement.setAttribute('dir', he ? 'rtl' : 'ltr');
+  document.documentElement.setAttribute('lang', he ? 'he' : 'en');
+  // Written without the stylesheet, which may not have loaded yet.
+  document.body.innerHTML =
+    '<div style="font:16px/1.6 system-ui,sans-serif;display:flex;' +
+    'align-items:center;justify-content:center;min-height:80vh;' +
+    'padding:24px;text-align:center;color:#333">' +
+    `<p>${msg}</p></div>`;
+  document.title = 'Withings';
+}
+
+/**
  * Open the Withings consent screen in a popup and resolve with the
  * authorization code.
  *
- * The popup lands back on this same page with ?code=...&state=... Because it
- * is same-origin we can read its URL directly and close it, which avoids
- * needing a separate callback page in the repo.
+ * The popup returns the code by postMessage (see handleOAuthCallback above)
+ * rather than by having this window read the popup's URL: the popup is a full
+ * page load of this same app, and racing its boot to scrape location.href is
+ * unreliable.
  *
  * The authorization code expires after THIRTY SECONDS, so the caller must
  * exchange it immediately — there is no room for an intervening prompt.
@@ -112,40 +186,42 @@ export function authorize (clientId) {
       return;
     }
 
-    // Poll the popup: once it navigates back to our origin the query string
-    // carries either a code or an error. Cross-origin reads throw while the
-    // user is still on account.withings.com, which is expected and ignored.
+    let settled = false;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('message', onMessage);
+      clearInterval(timer);
+      fn(arg);
+    };
+
+    function onMessage (ev) {
+      // Only trust messages from this origin, from our own popup.
+      if (ev.origin !== location.origin) return;
+      const d = ev.data;
+      if (!d || d.source !== 'withings-oauth') return;
+      try { popup.close(); } catch { /* it closes itself too */ }
+      if (d.error) finish(reject, new Error(d.error));
+      else if (!d.code) finish(reject, new Error('no-code'));
+      else if (d.state !== state) finish(reject, new Error('state-mismatch'));
+      else finish(resolve, d.code);
+    }
+    window.addEventListener('message', onMessage);
+
+    // A closed popup means the reader dismissed it. The grace period covers
+    // the gap between the callback posting its message and closing itself,
+    // which would otherwise look like a cancellation.
     const started = Date.now();
+    let closedAt = 0;
     const timer = setInterval(() => {
-      let done = false;
-      try {
-        if (popup.closed) {
-          clearInterval(timer);
-          reject(new Error('cancelled'));
-          return;
-        }
-        const href = popup.location.href;          // throws until same-origin
-        if (href && href.startsWith(redirectUri())) {
-          const q = new URL(href).searchParams;
-          const code = q.get('code');
-          const err = q.get('error');
-          const back = q.get('state');
-          done = true;
-          clearInterval(timer);
-          popup.close();
-          if (err) reject(new Error(err));
-          else if (!code) reject(new Error('no-code'));
-          else if (back !== state) reject(new Error('state-mismatch'));
-          else resolve(code);
-        }
-      } catch {
-        /* still on the Withings origin — keep waiting */
+      if (popup.closed) {
+        if (!closedAt) closedAt = Date.now();
+        if (Date.now() - closedAt > 700) finish(reject, new Error('cancelled'));
+        return;
       }
-      // Two minutes is long enough for a login and a consent click.
-      if (!done && Date.now() - started > 120000) {
-        clearInterval(timer);
+      if (Date.now() - started > 120000) {
         try { popup.close(); } catch { /* already gone */ }
-        reject(new Error('timeout'));
+        finish(reject, new Error('timeout'));
       }
     }, 300);
   });

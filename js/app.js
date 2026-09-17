@@ -15,7 +15,8 @@ import {
 } from './charts.js';
 import {
   loadCredentials, saveCredentials, clearCredentials, redirectUri,
-  authorize, exchangeCode, fetchSleepSummary, attachSleep
+  authorize, exchangeCode, fetchSleepSummary, attachSleep,
+  handleOAuthCallback
 } from './withings.js';
 
 let i18n = makeI18n(detectLanguage());
@@ -1148,4 +1149,8 @@ function download (blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-init();
+// When this page load IS the Withings OAuth callback, it is a popup whose only
+// job is to hand the code back to the window that opened it. Booting the whole
+// analyzer in that popup would repaint a report nobody will see, so the app
+// never starts.
+if (!handleOAuthCallback()) init();
