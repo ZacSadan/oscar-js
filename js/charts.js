@@ -251,34 +251,10 @@ export function ahiChart (nights, i18n, { w = 720, h = 220 } = {}) {
   thresholdLine(svg, s, w, 5, i18n.t('thresholdLine'));
 
   const n = data.length;
-
-  // Sleep duration behind each bar.
-  //
-  // This axis is events per hour, which sleep hours cannot share, so the band
-  // is drawn PROPORTIONALLY: the longest sleep in the period fills the plot
-  // and the rest scale against it. That makes it a relative backdrop — night
-  // to night, did you sleep more or less — and never a reading off the y axis.
-  // The tooltip gives the actual hours so nothing has to be eyeballed.
-  const sleepSecs = data.filter(d => d.sleep).map(d => d.sleep.totalSleepSec);
-  const maxSleep = sleepSecs.length ? Math.max(...sleepSecs) : 0;
-  if (maxSleep > 0) {
-    const plotTop = PAD.top;
-    const plotBottom = s.y(s.min);
-    data.forEach((night, i) => {
-      if (!night.sleep || night.sleep.totalSleepSec <= 0) return;
-      const frac = night.sleep.totalSleepSec / maxSleep;
-      const bandH = (plotBottom - plotTop) * frac;
-      const bw = s.bw(n) * 1.5;
-      const band = el('rect', {
-        x: s.bx(i, n) - bw / 2, y: plotBottom - bandH, width: bw,
-        height: Math.max(1, bandH), rx: 2, class: 'sleep-back'
-      });
-      tooltipTitle(band,
-        `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
-        `${i18n.duration(night.sleep.totalSleepSec)}\n\n${i18n.t('gSleepRelative')}`);
-      svg.appendChild(band);
-    });
-  }
+  // No sleep overlay here: this axis is events per hour, which sleep hours
+  // cannot share, so any sleep drawn against it would be a shape with no
+  // readable scale. Sleep is shown on the usage and timing charts instead,
+  // where the axis actually means something for it.
 
   data.forEach((night, i) => {
     const bw = s.bw(n);
@@ -333,30 +309,23 @@ export function usageChart (nights, i18n, { w = 720, h = 200 } = {}) {
 
   const n = data.length;
 
-  // Total sleep behind each bar. Drawn first so the therapy bar sits on top:
-  // the grey sticking out above is time asleep without the mask.
-  data.forEach((night, i) => {
-    if (!night.sleep) return;
-    const hrs = night.sleep.totalSleepSec / 3600;
-    if (hrs <= 0) return;
-    const bw = s.bw(n) * 1.5;
-    const y = s.y(hrs);
-    const band = el('rect', {
-      x: s.bx(i, n) - bw / 2, y, width: bw,
-      height: Math.max(1, s.y(s.min) - y), rx: 2, class: 'sleep-back'
-    });
-    tooltipTitle(band,
-      `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
-      `${i18n.duration(night.sleep.totalSleepSec)}\n\n${i18n.t('gSleepBack')}`);
-    svg.appendChild(band);
-  });
+  // When sleep data is present each night shows a PAIR of bars — therapy and
+  // sleep side by side — rather than one behind the other. Both are hours on
+  // the same axis, so standing them next to each other makes the difference
+  // directly readable instead of something to judge through an overlap.
+  const paired = data.some(d => d.sleep && d.sleep.totalSleepSec > 0);
+  const full = s.bw(n);
+  const bw = paired ? full / 2 : full;
+  // In a pair the therapy bar takes the left half and sleep the right. Charts
+  // stay LTR in both languages, so this order is stable for every reader.
+  const therapyX = (i) => paired ? s.bx(i, n) - bw : s.bx(i, n) - bw / 2;
+  const sleepX = (i) => s.bx(i, n);
 
   data.forEach((night, i) => {
     const v = night.totalSec / 3600;
     const y = s.y(v);
-    const bw = s.bw(n);
     const bar = el('rect', {
-      x: s.bx(i, n) - bw / 2, y: v > 0 ? y : s.y(s.min) - 2, width: bw,
+      x: therapyX(i), y: v > 0 ? y : s.y(s.min) - 2, width: bw,
       height: v > 0 ? Math.max(1, s.y(s.min) - y) : 2,
       rx: 2,
       class: `bar ${v >= 4 ? 'bar-good' : v > 0 ? 'bar-warn' : 'bar-missing'}`
@@ -368,10 +337,47 @@ export function usageChart (nights, i18n, { w = 720, h = 200 } = {}) {
 
 ${i18n.t('gUsage')}`);
     svg.appendChild(bar);
+
+    if (!paired) return;
+    const hrs = night.sleep ? night.sleep.totalSleepSec / 3600 : 0;
+    if (hrs <= 0) return;
+    const ys = s.y(hrs);
+    const sleepBar = el('rect', {
+      x: sleepX(i), y: ys, width: bw,
+      height: Math.max(1, s.y(s.min) - ys), rx: 2, class: 'bar bar-sleep'
+    });
+    tooltipTitle(sleepBar,
+      `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
+      `${i18n.duration(night.sleep.totalSleepSec)}\n\n${i18n.t('gSleepBack')}`);
+    svg.appendChild(sleepBar);
   });
 
   svg.appendChild(xLabels(s, n, data.map(d => dayLabel(d, i18n)), h));
   return svg;
+}
+
+/**
+ * Legend for the usage chart, needed only once it carries a second series.
+ * Returns null when there is no sleep data, so the caller can append it
+ * unconditionally.
+ */
+export function usageLegend (nights, i18n) {
+  if (!nights.some(n => n.sleep && n.sleep.totalSleepSec > 0)) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'legend';
+  for (const c of [
+    { cls: 'bar-good', label: i18n.t('colUse'), help: 'gUsage' },
+    { cls: 'bar-sleep', label: i18n.t('sleepBandLabel'), help: 'gSleepBack' }
+  ]) {
+    const item = document.createElement('span');
+    item.className = 'legend-item has-help';
+    item.title = `${c.label}\n\n${i18n.t(c.help)}`;
+    const sw = document.createElement('i');
+    sw.className = `swatch ${c.cls}`;
+    item.append(sw, document.createTextNode(c.label));
+    wrap.appendChild(item);
+  }
+  return wrap;
 }
 
 /* ---------------------------------------------------------------------------

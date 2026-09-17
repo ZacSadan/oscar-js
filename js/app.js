@@ -11,7 +11,7 @@ import { ahiBand, MIN_SESSION_SEC } from './analysis.js';
 import {
   ahiChart, usageChart, compositionChart, compositionLegend,
   pressureChart, sleepTimingChart, waveformChart, mixDonut,
-  sleepStageComparisonChart, sleepStageLegend
+  sleepStageComparisonChart, sleepStageLegend, usageLegend
 } from './charts.js';
 import {
   loadCredentials, saveCredentials, clearCredentials, redirectUri,
@@ -524,7 +524,9 @@ function renderCharts (r) {
   };
 
   add('chartAhi', ahiChart(r.nights, i18n));
-  add('chartUsage', usageChart(r.nights, i18n));
+  // The usage chart gains a second bar per night once sleep data is present,
+  // so it also gains a legend; usageLegend returns null when it is not needed.
+  add('chartUsage', usageChart(r.nights, i18n), usageLegend(r.nights, i18n));
   // With watch data present the timing chart gains a grey sleep band, so the
   // caption has to explain it.
   add('chartTiming', sleepTimingChart(r.nights, i18n), null,

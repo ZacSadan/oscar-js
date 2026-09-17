@@ -26,11 +26,12 @@
   --info: #47515d;
   --info-soft: #eef0f3;
 
-  /* Watch sleep data. Grey on purpose — it is a second, weaker source sitting
-     behind the therapy record, never a peer of it. */
+  /* Watch sleep data. Grey on purpose — it comes from a different device than
+     everything else on these charts, and should never read as therapy data.
+     The translucent band sits behind the timing candles; the solid bar stands
+     beside the usage bars. */
   --sleep-band: rgba(120, 130, 145, .28);
-  /* Lighter still: whole coloured bars are drawn on top of this one. */
-  --sleep-back: rgba(120, 130, 145, .20);
+  --sleep-bar: #9aa3b0;
   --sleep-deep: #3f5c8a;
   --sleep-rem: #7a9cc6;
 
@@ -61,7 +62,7 @@
     --info: #b6bec8;
     --info-soft: #22272c;
     --sleep-band: rgba(150, 160, 175, .24);
-    --sleep-back: rgba(150, 160, 175, .18);
+    --sleep-bar: #767f8c;
     --sleep-deep: #6f93c8;
     --sleep-rem: #a9c4e2;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4);
@@ -499,10 +500,10 @@ main { padding-block: 26px 40px; }
    and low-contrast: it is context for the therapy blocks, not a competing
    series, and it must never be mistaken for CPAP data. */
 .sleep-band { fill: var(--sleep-band); }
-/* Sleep drawn behind the bars of the AHI and usage charts. Lighter than the
-   timing-chart band because whole bars sit on top of it, and it must stay
-   legible as a backdrop without competing with them. */
-.sleep-back { fill: var(--sleep-back); }
+/* The sleep bar standing beside each therapy bar on the usage chart. Solid
+   rather than translucent — it is a peer of the bar next to it, not a
+   backdrop — but grey, because it comes from a different device. */
+.bar-sleep { fill: var(--sleep-bar); }
 .seg-deep   { fill: var(--sleep-deep); }
 .seg-rem    { fill: var(--sleep-rem); }
 
@@ -566,6 +567,9 @@ main { padding-block: 26px 40px; }
    theme rather than hard-coding a second copy of the palette. */
 .swatch.seg-deep { background: var(--sleep-deep); }
 .swatch.seg-rem  { background: var(--sleep-rem); }
+/* Usage-chart legend: therapy hours against watch sleep hours. */
+.swatch.bar-good  { background: var(--good); }
+.swatch.bar-sleep { background: var(--sleep-bar); }
 
 /* ----------------------------------------------------------------- table */
 
