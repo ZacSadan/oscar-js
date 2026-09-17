@@ -693,16 +693,18 @@ export async function attachNightlySplit (report, accessToken, onProgress = () =
   // the night is held constant. A night with no therapy at all contributes
   // to neither average, because it has no masked half to compare against.
   if (any) {
+    // Same rule the chart applies: a side counts only when real sleep was
+    // measured on it, so a night the watch logged but never scored does not
+    // enter either average as a zero.
+    const scored = (d) => d && d.deepRemPct != null && d.sleepSec > 0;
     const on = [], off = [];
     for (const night of report.nights) {
       const sp = night.sleepSplit;
-      if (!sp) continue;
-      if (sp.on?.deepRemPct != null) on.push(sp.on.deepRemPct);
+      if (!scored(sp?.on)) continue;
+      on.push(sp.on.deepRemPct);
       // The unmasked half only counts when the same night also had therapy,
       // so the two averages describe the same set of nights.
-      if (sp.on?.deepRemPct != null && sp.off?.deepRemPct != null) {
-        off.push(sp.off.deepRemPct);
-      }
+      if (scored(sp.off)) off.push(sp.off.deepRemPct);
     }
     const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
     report.sleep.treated = { ...report.sleep.treated, count: on.length, deepRemPct: mean(on) };

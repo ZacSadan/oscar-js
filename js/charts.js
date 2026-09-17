@@ -819,27 +819,36 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   // invites reading a difference that is really just "this was a night off".
   // Those nights are still visible on the other charts; this one is strictly
   // about what changed when the mask was on.
+  // A side only counts when it has measured sleep behind it. Without this a
+  // night the watch logged but never scored — zero sleep, or stages the
+  // device could not classify — produces a row whose percentage is null and
+  // renders as an empty slot on the axis.
+  const scored = (d) => d && d.deepRemPct != null && d.sleepSec > 0;
+
   const rows = s.nights.map(x => {
     const split = splitByKey.get(x.dateKey);
     if (split) {
       // Split nights only count when there IS a masked half to compare.
-      if (!split.on) return null;
+      if (!scored(split.on)) return null;
       return {
         key: x.dateKey,
         dateObj: keyToDateLocal(x.dateKey),
-        on: split.on, off: split.off
+        on: split.on,
+        off: scored(split.off) ? split.off : null
       };
     }
     // No intra-night detail: the whole night stands as its masked figure,
     // but only if the card recorded therapy for it.
     if (!treatedKeys.has(x.dateKey)) return null;
+    const whole = {
+      deepRemPct: x.deepRemPct, deepPct: x.deepPct, remPct: x.remPct,
+      sleepSec: x.totalSleepSec
+    };
+    if (!scored(whole)) return null;
     return {
       key: x.dateKey,
       dateObj: keyToDateLocal(x.dateKey),
-      on: {
-        deepRemPct: x.deepRemPct, deepPct: x.deepPct, remPct: x.remPct,
-        sleepSec: x.totalSleepSec
-      },
+      on: whole,
       off: null
     };
   }).filter(Boolean)
