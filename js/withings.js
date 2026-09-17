@@ -38,6 +38,7 @@
  * ========================================================================== */
 
 const STORE_KEY = 'withings-app';     // client_id + client_secret (reader's own)
+const HANDOFF_KEY = 'withings-oauth-handoff';   // popup -> opener, see below
 const AUTH_URL  = 'https://account.withings.com/oauth2_user/authorize2';
 const API_URL   = 'https://wbsapi.withings.net/v2';
 const SCOPE     = 'user.activity';
@@ -91,6 +92,18 @@ export function redirectUri () {
  * OAuth: popup -> code -> token
  * -------------------------------------------------------------------------*/
 
+/** Read the popup's handoff payload, if it left one. */
+function readHandoff () {
+  try {
+    const raw = sessionStorage.getItem(HANDOFF_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function clearHandoff () {
+  try { sessionStorage.removeItem(HANDOFF_KEY); } catch { /* nothing to clear */ }
+}
+
 /**
  * Runs FIRST, before anything else boots.
  *
@@ -114,6 +127,18 @@ export function handleOAuthCallback () {
   if (!code && !error) return false;               // an ordinary page load
 
   const payload = { source: 'withings-oauth', code, error, state };
+
+  // Hand off by TWO independent routes, because either can fail on its own.
+  //
+  // sessionStorage is shared with the opener (same origin, and a popup
+  // inherits the session), and is written FIRST so the result is already
+  // durable before any message is attempted. postMessage then wakes the
+  // opener immediately. If the message is lost — a listener not yet attached,
+  // an opener reference severed by the navigation — the opener still finds
+  // the code in storage when the popup closes.
+  try { sessionStorage.setItem(HANDOFF_KEY, JSON.stringify(payload)); }
+  catch { /* private mode: the message route has to carry it alone */ }
+
   let delivered = false;
   try {
     if (window.opener && !window.opener.closed) {
@@ -122,10 +147,12 @@ export function handleOAuthCallback () {
       window.opener.postMessage(payload, location.origin);
       delivered = true;
     }
-  } catch { /* opener gone or cross-origin; fall through to the manual note */ }
+  } catch { /* opener gone or cross-origin; storage still carries it */ }
 
   showCallbackNotice(delivered, error);
-  if (delivered) setTimeout(() => { try { window.close(); } catch { /* ignore */ } }, 400);
+  // Close even when the message could not be posted: the opener picks the
+  // result up from storage, and a popup left open helps nobody.
+  setTimeout(() => { try { window.close(); } catch { /* ignore */ } }, 400);
   return true;
 }
 
@@ -195,35 +222,56 @@ export function authorize (clientId) {
       fn(arg);
     };
 
-    function onMessage (ev) {
-      // Only trust messages from this origin, from our own popup.
-      if (ev.origin !== location.origin) return;
-      const d = ev.data;
-      if (!d || d.source !== 'withings-oauth') return;
+    /** Accept a handoff payload from either route. */
+    const accept = (d) => {
+      if (!d || d.source !== 'withings-oauth') return false;
+      clearHandoff();
       try { popup.close(); } catch { /* it closes itself too */ }
       if (d.error) finish(reject, new Error(d.error));
       else if (!d.code) finish(reject, new Error('no-code'));
       else if (d.state !== state) finish(reject, new Error('state-mismatch'));
       else finish(resolve, d.code);
+      return true;
+    };
+
+    function onMessage (ev) {
+      // Only trust messages from this origin, from our own popup.
+      if (ev.origin !== location.origin) return;
+      accept(ev.data);
     }
     window.addEventListener('message', onMessage);
 
-    // A closed popup means the reader dismissed it. The grace period covers
-    // the gap between the callback posting its message and closing itself,
-    // which would otherwise look like a cancellation.
+    // Anything left in sessionStorage by a previous attempt would be stale and
+    // would resolve this one with the wrong code.
+    clearHandoff();
+
     const started = Date.now();
     let closedAt = 0;
     const timer = setInterval(() => {
+      // The storage route is checked on every tick, not only at close: it is
+      // written before the message is posted, so it is usually the first of
+      // the two to be readable.
+      if (accept(readHandoff())) return;
+
       if (popup.closed) {
+        // The popup can read as closed for a moment during the cross-origin
+        // navigation back, and it closes itself right after handing over, so
+        // a close is never immediately conclusive. Give the handoff time to
+        // land before calling it a cancellation.
         if (!closedAt) closedAt = Date.now();
-        if (Date.now() - closedAt > 700) finish(reject, new Error('cancelled'));
+        if (Date.now() - closedAt > 1500) {
+          if (accept(readHandoff())) return;
+          finish(reject, new Error('cancelled'));
+        }
         return;
       }
+      closedAt = 0;                 // it was only transiently unreachable
+
       if (Date.now() - started > 120000) {
         try { popup.close(); } catch { /* already gone */ }
         finish(reject, new Error('timeout'));
       }
-    }, 300);
+    }, 250);
   });
 }
 

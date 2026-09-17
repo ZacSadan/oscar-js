@@ -251,6 +251,35 @@ export function ahiChart (nights, i18n, { w = 720, h = 220 } = {}) {
   thresholdLine(svg, s, w, 5, i18n.t('thresholdLine'));
 
   const n = data.length;
+
+  // Sleep duration behind each bar.
+  //
+  // This axis is events per hour, which sleep hours cannot share, so the band
+  // is drawn PROPORTIONALLY: the longest sleep in the period fills the plot
+  // and the rest scale against it. That makes it a relative backdrop — night
+  // to night, did you sleep more or less — and never a reading off the y axis.
+  // The tooltip gives the actual hours so nothing has to be eyeballed.
+  const sleepSecs = data.filter(d => d.sleep).map(d => d.sleep.totalSleepSec);
+  const maxSleep = sleepSecs.length ? Math.max(...sleepSecs) : 0;
+  if (maxSleep > 0) {
+    const plotTop = PAD.top;
+    const plotBottom = s.y(s.min);
+    data.forEach((night, i) => {
+      if (!night.sleep || night.sleep.totalSleepSec <= 0) return;
+      const frac = night.sleep.totalSleepSec / maxSleep;
+      const bandH = (plotBottom - plotTop) * frac;
+      const bw = s.bw(n) * 1.5;
+      const band = el('rect', {
+        x: s.bx(i, n) - bw / 2, y: plotBottom - bandH, width: bw,
+        height: Math.max(1, bandH), rx: 2, class: 'sleep-back'
+      });
+      tooltipTitle(band,
+        `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
+        `${i18n.duration(night.sleep.totalSleepSec)}\n\n${i18n.t('gSleepRelative')}`);
+      svg.appendChild(band);
+    });
+  }
+
   data.forEach((night, i) => {
     const bw = s.bw(n);
     // A day with no therapy gets a faint baseline stub, so the gap is visible
@@ -290,7 +319,12 @@ export function usageChart (nights, i18n, { w = 720, h = 200 } = {}) {
   if (nights.length < 2) return null;
   const data = fillMissingDays(nights);
   const values = data.map(n => n.totalSec / 3600);
-  const s = scales([...values, 4], w, h);
+  // Sleep hours share this axis exactly — both are hours — so the watch data
+  // is included in the scale to keep a long sleep from overflowing the plot.
+  const sleepHours = data
+    .filter(n => n.sleep)
+    .map(n => n.sleep.totalSleepSec / 3600);
+  const s = scales([...values, ...sleepHours, 4], w, h);
   const svg = svgRoot(w, h, 'chart');
   svg.appendChild(gridAndAxis(s, w, h, i18n, 4, v => i18n.num(v, 0)));
   weekSeparators(svg, s, data, h);
@@ -298,6 +332,25 @@ export function usageChart (nights, i18n, { w = 720, h = 200 } = {}) {
   thresholdLine(svg, s, w, 4, i18n.t('complianceLine'));
 
   const n = data.length;
+
+  // Total sleep behind each bar. Drawn first so the therapy bar sits on top:
+  // the grey sticking out above is time asleep without the mask.
+  data.forEach((night, i) => {
+    if (!night.sleep) return;
+    const hrs = night.sleep.totalSleepSec / 3600;
+    if (hrs <= 0) return;
+    const bw = s.bw(n) * 1.5;
+    const y = s.y(hrs);
+    const band = el('rect', {
+      x: s.bx(i, n) - bw / 2, y, width: bw,
+      height: Math.max(1, s.y(s.min) - y), rx: 2, class: 'sleep-back'
+    });
+    tooltipTitle(band,
+      `${i18n.t('sleepBandLabel')} — ${i18n.date(night.dateObj)}: ` +
+      `${i18n.duration(night.sleep.totalSleepSec)}\n\n${i18n.t('gSleepBack')}`);
+    svg.appendChild(band);
+  });
+
   data.forEach((night, i) => {
     const v = night.totalSec / 3600;
     const y = s.y(v);

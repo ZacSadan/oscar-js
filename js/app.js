@@ -92,18 +92,6 @@ function init () {
     window.scrollTo({ top: 0 });
   });
 
-  // Scroll to the Withings panel and flash it, so arriving there does not
-  // leave the reader hunting for what just changed.
-  $('#withings-btn').addEventListener('click', () => {
-    const panel = $('#withings');
-    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    panel.classList.remove('flash');
-    // Reading offsetWidth restarts the animation when the button is pressed
-    // twice in a row.
-    void panel.offsetWidth;
-    panel.classList.add('flash');
-  });
-
   $('#print-btn').addEventListener('click', () => window.print());
   $('#csv-btn').addEventListener('click', exportCsv);
   $('#json-btn').addEventListener('click', exportJson);
@@ -153,7 +141,6 @@ function applyLanguage (lang) {
   $('#drop-hint').textContent = i18n.t('dropHint');
   $('#drop-or').textContent = i18n.t('dropOr');
   $('#reset-btn').textContent = i18n.t('reset');
-  $('#withings-btn').textContent = i18n.t('withingsButton');
   $('#print-btn').textContent = i18n.t('print');
   $('#csv-btn').textContent = i18n.t('exportCsv');
   $('#json-btn').textContent = i18n.t('exportJson');

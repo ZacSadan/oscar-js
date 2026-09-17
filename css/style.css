@@ -29,6 +29,8 @@
   /* Watch sleep data. Grey on purpose — it is a second, weaker source sitting
      behind the therapy record, never a peer of it. */
   --sleep-band: rgba(120, 130, 145, .28);
+  /* Lighter still: whole coloured bars are drawn on top of this one. */
+  --sleep-back: rgba(120, 130, 145, .20);
   --sleep-deep: #3f5c8a;
   --sleep-rem: #7a9cc6;
 
@@ -59,6 +61,7 @@
     --info: #b6bec8;
     --info-soft: #22272c;
     --sleep-band: rgba(150, 160, 175, .24);
+    --sleep-back: rgba(150, 160, 175, .18);
     --sleep-deep: #6f93c8;
     --sleep-rem: #a9c4e2;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4);
@@ -496,6 +499,10 @@ main { padding-block: 26px 40px; }
    and low-contrast: it is context for the therapy blocks, not a competing
    series, and it must never be mistaken for CPAP data. */
 .sleep-band { fill: var(--sleep-band); }
+/* Sleep drawn behind the bars of the AHI and usage charts. Lighter than the
+   timing-chart band because whole bars sit on top of it, and it must stay
+   legible as a backdrop without competing with them. */
+.sleep-back { fill: var(--sleep-back); }
 .seg-deep   { fill: var(--sleep-deep); }
 .seg-rem    { fill: var(--sleep-rem); }
 
@@ -940,16 +947,6 @@ html[dir="rtl"] .caveat { border-radius: 6px 0 0 6px; }
 
 .withings-panel { margin-block-start: 18px; }
 
-/* Brief highlight when the toolbar button scrolls the reader here, so it is
-   obvious which panel was being pointed at. */
-@keyframes withings-flash {
-  0%   { box-shadow: 0 0 0 0 rgba(47, 111, 178, .55); }
-  100% { box-shadow: 0 0 0 14px rgba(47, 111, 178, 0); }
-}
-.withings-panel.flash {
-  animation: withings-flash 1.1s ease-out 2;
-  border-color: var(--accent);
-}
 
 .withings-row {
   display: flex;
@@ -1040,7 +1037,4 @@ html[dir="rtl"] .caveat { border-radius: 6px 0 0 6px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
-  /* The attention flash is decorative; the border change still marks the
-     panel for readers who have asked for less motion. */
-  .withings-panel.flash { animation: none !important; }
 }
