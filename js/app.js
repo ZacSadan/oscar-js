@@ -11,7 +11,8 @@ import { ahiBand, MIN_SESSION_SEC } from './analysis.js';
 import {
   ahiChart, usageChart, compositionChart, compositionLegend,
   pressureChart, sleepTimingChart, waveformChart, mixDonut,
-  sleepStageComparisonChart, sleepStageLegend, usageLegend
+  sleepStageComparisonChart, sleepStageLegend, usageLegend,
+  ahiLegend, pressureLegend, deepSleepChart, highLeakChart, deviceAhiParts
 } from './charts.js';
 import {
   loadCredentials, saveCredentials, clearCredentials, redirectUri,
@@ -284,6 +285,20 @@ function renderSummary (r) {
     card(i18n.t('colRdi'), i18n.num(r.avgRdi),
       `${i18n.t('colRera')} ${i18n.num(r.avgReraIndex)}${i18n.t('eventsPerHour')}`)
   );
+  // The device's own averages, combined as prisma JOURNAL combines them, so a
+  // reader comparing against that viewer finds the same numbers here.
+  const dev = r.deviceAvg;
+  if (dev) {
+    grid.append(
+      card(i18n.t('deviceAhi'), `${i18n.int(dev.ahi)}${i18n.t('eventsPerHour')}`,
+        `${deviceAhiParts(dev, i18n)} · ${i18n.int(dev.nights)} ${i18n.t('sleepNights')}`),
+      card(i18n.t('devicePressureP90'),
+        dev.pressureP90 != null ? `${i18n.num(dev.pressureP90)} cmH₂O` : '—',
+        `${i18n.t('deviceHighLeak')} ${dev.highLeakPct != null ? i18n.int(dev.highLeakPct) + '%' : '—'}`),
+      card(i18n.t('deviceDeepSleep'),
+        dev.deepSleepMin != null ? `${i18n.int(dev.deepSleepMin)} ${i18n.t('minutesShort')}` : '—')
+    );
+  }
   box.appendChild(grid);
 
   const donut = mixDonut(r, i18n);
@@ -540,7 +555,8 @@ function renderCharts (r) {
     box.appendChild(fig);
   };
 
-  add('chartAhi', ahiChart(r.nights, i18n, { sleep: r.sleep }));
+  add('chartAhi', ahiChart(r.nights, i18n, { sleep: r.sleep }), ahiLegend(r, i18n),
+    r.deviceAvg ? 'chartAhiHintDevice' : null);
   // The usage chart gains a second bar per night once sleep data is present,
   // so it also gains a legend; usageLegend returns null when it is not needed.
   add('chartUsage', usageChart(r.nights, i18n, { sleep: r.sleep }),
@@ -566,7 +582,9 @@ function renderCharts (r) {
   }
 
   add('chartComposition', compositionChart(r.nights, i18n), compositionLegend(i18n));
-  add('chartPressure', pressureChart(r.nights, i18n));
+  add('chartPressure', pressureChart(r.nights, i18n), pressureLegend(r, i18n));
+  add('chartDeepSleep', deepSleepChart(r.nights, i18n), null, 'chartDeepSleepHint');
+  add('chartHighLeak', highLeakChart(r.nights, i18n), null, 'chartHighLeakHint');
 
   if (box.children.length === 1) {
     box.appendChild(h('p', 'muted', i18n.t('chartNone')));
@@ -578,16 +596,21 @@ const COLUMNS = [
   { key: 'colWeekday',  get: (n) => i18n.weekday(n.dateObj, 'short') },
   { key: 'colUse',      get: (n) => n.totalSec ? i18n.duration(n.totalSec) : i18n.t('noUse') },
   { key: 'colAhi',      get: (n) => n.hours ? i18n.num(n.ahi) : '—', band: (n) => n.hours ? bandClass(n.ahi) : null },
+  { key: 'colDeviceAhi', get: (n) => n.device ? i18n.int(n.device.ahi) : '—', title: (n) => n.device ? deviceAhiParts(n.device, i18n) : null },
   { key: 'colAi',       get: (n) => n.hours ? i18n.num(n.ai) : '—' },
   { key: 'colHi',       get: (n) => n.hours ? i18n.num(n.hi) : '—' },
   { key: 'colRdi',      get: (n) => n.hours ? i18n.num(n.rdi) : '—' },
-  { key: 'colOa',       get: (n) => i18n.int(n.obstructiveApneaCount) },
-  { key: 'colCa',       get: (n) => i18n.int(n.centralApneaCount) },
-  { key: 'colRera',     get: (n) => i18n.int(n.reraCount) },
-  { key: 'colSnore',    get: (n) => i18n.int(n.snoreCount) },
-  { key: 'colLeak',     get: (n) => i18n.int(n.largeLeakCount) },
+  // A summary-only night has no event records, so its counts are unknown, not 0.
+  { key: 'colOa',       get: (n) => n.statOnly ? '—' : i18n.int(n.obstructiveApneaCount) },
+  { key: 'colCa',       get: (n) => n.statOnly ? '—' : i18n.int(n.centralApneaCount) },
+  { key: 'colRera',     get: (n) => n.statOnly ? '—' : i18n.int(n.reraCount) },
+  { key: 'colSnore',    get: (n) => n.statOnly ? '—' : i18n.int(n.snoreCount) },
+  { key: 'colLeak',     get: (n) => n.statOnly ? '—' : i18n.int(n.largeLeakCount) },
   { key: 'colPressure', get: (n) => n.pressureP95 != null ? i18n.num(n.pressureP95) : '—' },
-  { key: 'colSessions', get: (n) => i18n.int(n.sessionCount) }
+  { key: 'colDeviceP90', get: (n) => n.device?.pressureP90 != null ? i18n.num(n.device.pressureP90) : '—' },
+  { key: 'colDeepSleep', get: (n) => n.device?.deepSleepMin != null ? i18n.int(n.device.deepSleepMin) : '—' },
+  { key: 'colSessions', get: (n) => n.statOnly ? i18n.t('statOnlyShort') : i18n.int(n.sessionCount),
+    title: (n) => n.statOnly ? i18n.t('statOnlyNight') : null }
 ];
 
 function renderTable (r) {
@@ -624,7 +647,10 @@ function renderTable (r) {
 
     for (const c of COLUMNS) {
       const band = c.band?.(night);
-      tr.appendChild(h('td', band ? `cell-${band}` : null, c.get(night)));
+      const td = h('td', band ? `cell-${band}` : null, c.get(night));
+      const title = c.title?.(night);
+      if (title) td.title = title;
+      tr.appendChild(td);
     }
     tbody.appendChild(tr);
   }
@@ -759,7 +785,10 @@ function renderGlossary (r) {
     [i18n.t('legendObstructive'), 'gOa'], [i18n.t('legendCentral'), 'gCa'],
     ['RERA', 'gRera'], [i18n.t('legendSnore'), 'gSnore'],
     [i18n.t('colLeak'), 'gLeak'], [i18n.t('detailPeriodic'), 'gPeriodic'],
-    [i18n.t('colPressure'), 'gP95']
+    [i18n.t('colPressure'), 'gP95'],
+    [i18n.t('deviceAhi'), 'gDeviceAhi'], [i18n.t('devicePressureP90'), 'gDeviceP90'],
+    [i18n.t('deviceDeepSleep'), 'gDeviceDeepSleep'], [i18n.t('deviceHighLeak'), 'gDeviceHighLeak'],
+    [i18n.t('statOnlyShort'), 'statOnlyNight']
   ];
   const dl = h('dl', 'glossary');
   for (const [term, key] of terms) {
@@ -1091,8 +1120,11 @@ function exportCsv () {
   const cols = [
     'date', 'usage_hours', 'ahi', 'ai', 'hi', 'rdi', 'obstructive_apnea',
     'central_apnea', 'hypopnea', 'rera', 'snore', 'large_leak',
-    'leak_pct_of_night', 'pressure_p95', 'periodic_breathing_pct', 'sessions'
+    'leak_pct_of_night', 'pressure_p95', 'periodic_breathing_pct', 'sessions',
+    'device_ahi', 'device_oahi', 'device_cai', 'device_high_pressure_ahi',
+    'device_pressure_p90', 'device_high_leak_pct', 'device_deep_sleep_min', 'summary_only'
   ];
+  const opt = (v) => (v == null ? '' : v);
   const lines = [cols.join(',')];
   for (const n of report.nights) {
     lines.push([
@@ -1107,7 +1139,11 @@ function exportCsv () {
       n.leakPct.toFixed(2),
       n.pressureP95 != null ? n.pressureP95.toFixed(2) : '',
       n.periodicBreathingPct.toFixed(2),
-      n.sessionCount
+      n.sessionCount,
+      opt(n.device?.ahi), opt(n.device?.oAhi), opt(n.device?.cAi),
+      opt(n.device?.highPressureAhi), opt(n.device?.pressureP90),
+      opt(n.device?.highLeakPct), opt(n.device?.deepSleepMin),
+      n.statOnly ? 1 : 0
     ].join(','));
   }
   download(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
@@ -1125,7 +1161,8 @@ function exportJson () {
     summary: {
       nights: report.nightsWithUse, avgAhi: report.avgAhi, avgHours: report.avgHours,
       compliancePct: report.compliancePct, totalHours: report.totalHours,
-      avgRdi: report.avgRdi, centralFraction: report.centralFraction
+      avgRdi: report.avgRdi, centralFraction: report.centralFraction,
+      device: report.deviceAvg
     },
     insights: report.insights.map(i => ({
       id: i.id, severity: i.severity, ...i18n.insight(i.id, i.values)
@@ -1136,6 +1173,12 @@ function exportJson () {
       centralApnea: n.centralApneaCount, hypopnea: n.hypopneaCount,
       rera: n.reraCount, snore: n.snoreCount, largeLeak: n.largeLeakCount,
       pressureP95: n.pressureP95, periodicBreathingPct: n.periodicBreathingPct,
+      summaryOnly: n.statOnly,
+      device: n.device ? {
+        ahi: n.device.ahi, oAhi: n.device.oAhi, cAi: n.device.cAi,
+        highPressureAhi: n.device.highPressureAhi, pressureP90: n.device.pressureP90,
+        highLeakPct: n.device.highLeakPct, deepSleepMinutes: n.device.deepSleepMin
+      } : null,
       sessions: n.sessions.map(s => ({
         startedAt: s.startedAt, durationSeconds: s.durationSec, usable: s.usable
       }))

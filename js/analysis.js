@@ -5,11 +5,15 @@
  *  - Indices are COMPUTED HERE from event records, never read from the device
  *    summary. The device's own AHI formula is not publicly reproducible, so we
  *    publish our own definition instead of pretending to match the LCD.
+ *    The device's figures are shown alongside, labelled as the device's
+ *    (see deviceSummary).
  *  - Epoch events (2-minute analysis windows) are converted to % of therapy
  *    time and never counted as discrete events.
  *  - A night is the SD-card day folder. prisma uses a noon-to-noon boundary,
  *    so the folder name already identifies the night; we never re-derive it
- *    from a session timestamp.
+ *    from a session timestamp. The exception is a night with no folder,
+ *    known only from statistic.psstat: that one is dated by the
+ *    summary's own wall-clock start time.
  *  - Sessions shorter than MIN_SESSION_SEC are excluded from indices because
  *    brief mask-on/off produces meaningless per-hour rates.
  * ========================================================================== */
@@ -155,12 +159,131 @@ export function hoursFromNoon (d) {
   return h >= 12 ? h - 12 : h + 12;
 }
 
-/** Aggregate sessions belonging to one night folder. */
-export function buildNight (dateKey, sessions, statDay) {
+/* ---------------------------------------------------------------------------
+ * The device's own figures, from statistic.psstat
+ *
+ * Reproduces what the manufacturer's prisma JOURNAL web viewer shows, using
+ * the formulas in its reader (SJ.js, getJSONData). They are kept apart from
+ * our indices and always labelled as the device's: the per-hour rates are
+ * rounded to whole numbers, as the JOURNAL displays them, and the event
+ * tallies behind them are the device's, not the event XML.
+ * -------------------------------------------------------------------------*/
+
+/** Below this many minutes the JOURNAL treats a night as not used. */
+export const DEVICE_MIN_USE_MIN = 3;
+/** Leak histogram bins from here up count as high leak. */
+const HIGH_LEAK_BIN = 14;
+
+function versionAtLeast (v, min) {
+  if (!v) return false;
+  const a = String(v).split('.').map(Number);
+  const b = String(min).split('.').map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || 0, y = b[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+/**
+ * P90 of the 0.5 hPa pressure histogram: the first bin whose running total
+ * passes 90% of all minutes. Null when the histogram is empty.
+ */
+export function histogramP90 (hist) {
+  if (!Array.isArray(hist)) return null;
+  const total = hist.reduce((s, v) => s + v, 0);
+  if (total <= 0) return null;
+  let run = 0;
+  for (let i = 0; i < hist.length; i++) {
+    run += hist[i];
+    if (run > 0.9 * total) return 4 + i / 2;
+  }
+  return null;
+}
+
+/** Share of therapy time with high leak, in whole percent. */
+function highLeakPct (hist, minutes) {
+  if (!Array.isArray(hist) || !(minutes > 0)) return null;
+  const samples = hist.slice(HIGH_LEAK_BIN).reduce((s, v) => s + v, 0);
+  return Math.round(Math.round((2 * samples) / 60) / minutes * 100);
+}
+
+export function deviceSummary (stat, firmware = null) {
+  if (!stat || !(stat.therapyMinutes >= DEVICE_MIN_USE_MIN)) return null;
+  const min = stat.therapyMinutes;
+  const perHour = (n) => (Number.isFinite(n) && n > 0 ? Math.round((60 * n) / min) : 0);
+  const oAhi = perHour(stat.obstructiveEventStat);
+  // Firmware 3.0 moved the central index from the central event tally to the
+  // central apnea count; 3.5 added the high-pressure tally.
+  const cAi = versionAtLeast(firmware, '3.0')
+    ? perHour(stat.centralApneaCount)
+    : perHour(stat.centralEventStat);
+  const highPressureAhi = versionAtLeast(firmware, '3.5') && stat.highPressureEventCount >= 0
+    ? perHour(stat.highPressureEventCount)
+    : null;
+  return {
+    usageMin: min,
+    oAhi,
+    cAi,
+    highPressureAhi,
+    ahi: oAhi + cAi + (highPressureAhi || 0),
+    pressureP90: histogramP90(stat.pressureHistogram),
+    highLeakPct: highLeakPct(stat.leakHistogram, min),
+    deepSleepMin: Number.isFinite(stat.deepSleepMinutes) ? stat.deepSleepMinutes : null,
+    pressureHistogram: stat.pressureHistogram || null,
+    leakHistogram: stat.leakHistogram || null
+  };
+}
+
+/** Period averages, combined the way the JOURNAL combines them. */
+function deviceAverages (nights) {
+  const days = nights.map(n => n.device).filter(Boolean);
+  if (!days.length) return null;
+  const avg = (xs) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
+  const sumHist = (key) => {
+    const out = [];
+    for (const d of days) {
+      (d[key] || []).forEach((v, i) => { out[i] = (out[i] || 0) + v; });
+    }
+    return out;
+  };
+  const oAhi = Math.round(avg(days.map(d => d.oAhi)));
+  const cAi = Math.round(avg(days.map(d => d.cAi)));
+  const hp = days.filter(d => d.highPressureAhi != null).map(d => d.highPressureAhi);
+  const highPressureAhi = hp.length ? Math.round(avg(hp)) : null;
+  const deep = days.map(d => d.deepSleepMin).filter(v => v > 0);
+  const usageMin = avg(days.map(d => d.usageMin));
+  return {
+    nights: days.length,
+    usageMin,
+    oAhi,
+    cAi,
+    highPressureAhi,
+    ahi: oAhi + cAi + (highPressureAhi || 0),
+    pressureP90: histogramP90(sumHist('pressureHistogram')),
+    highLeakPct: highLeakPct(sumHist('leakHistogram'), usageMin * days.length),
+    deepSleepMin: deep.length ? Math.round(avg(deep)) : null
+  };
+}
+
+/**
+ * Aggregate sessions belonging to one night folder.
+ *
+ * A night can also arrive with NO sessions: statistic.psstat keeps a longer
+ * history than the session folders, so older nights exist only as its daily
+ * summary. Such a night takes its usage from the summary and is flagged
+ * `statOnly`; it has no events, so `hours` (the scored time) stays 0 and it
+ * never enters our own indices.
+ */
+export function buildNight (dateKey, sessions, statDay, { firmware = null } = {}) {
   const usable = sessions.filter(s => s.usable);
   const pool = usable.length ? usable : sessions;
+  const device = deviceSummary(statDay, firmware);
+  const statOnly = sessions.length === 0 && device != null;
 
-  const totalSec = sessions.reduce((s, x) => s + x.durationSec, 0);
+  const totalSec = statOnly
+    ? device.usageMin * 60
+    : sessions.reduce((s, x) => s + x.durationSec, 0);
   const scoredSec = pool.reduce((s, x) => s + x.durationSec, 0);
   const hours = scoredSec / 3600;
 
@@ -231,6 +354,7 @@ export function buildNight (dateKey, sessions, statDay) {
     snoreEpochPct: pct(epochSec.snoreEpoch || 0),
 
     pressureMedian: median(pressures),
+    pressureP90: percentile(pressures, 90),
     pressureP95: percentile(pressures, 95),
     pressureMax: pressures.length ? Math.max(...pressures) : null,
 
@@ -238,6 +362,8 @@ export function buildNight (dateKey, sessions, statDay) {
     epochSec,
     stat: statDay || null,
     config: statDay?.config || null,
+    device,
+    statOnly,
 
     // Clock span of the night, for the sleep-timing chart. `bedtime` is the
     // first session's start and `wake` the last session's end, so the span
@@ -348,7 +474,9 @@ export function buildReport (nights, device) {
     longestApneaSec: nights.reduce((m, n) => Math.max(m, n.longestApneaSec), 0),
     trend: linearTrend(scored.map((n, i) => [i, n.ahi])),
     usageTrend: linearTrend(withUse.map((n, i) => [i, n.totalSec / 3600])),
-    streak: longestStreak(nights)
+    streak: longestStreak(nights),
+    deviceAvg: deviceAverages(nights),
+    statOnlyNights: nights.filter(n => n.statOnly).length
   };
 
   const centralTotal = report.totalCentral;

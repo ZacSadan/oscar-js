@@ -334,31 +334,41 @@ export function parseConfig (text) {
  *   37 == count of RespEventID 101 (obstructive apnea)
  *   38 == count of RespEventID 102 (central apnea)
  *   6  == therapy minutes
- *   5  == session start (unix seconds)
- * Fields 16/17 track hypopneas but run HIGHER than XML 111/112 counts (they
- * appear to include sub-threshold events the XML omits), so they are exposed
- * as-is and never used for scoring. 47/49/50 are lifetime cumulative counters.
+ *   5  == session start, in seconds of the device's WALL CLOCK since 1970 —
+ *         not true unix time. Read as UTC it reproduces the EDF header's
+ *         local start time exactly (07.09.26 22.57.56 <-> 22:57), and it is
+ *         how the manufacturer's prisma JOURNAL reads it.
+ * Fields 16/17 run HIGHER than XML 111/112 hypopnea counts; they are the
+ * device's own obstructive / central event tallies behind its oAHI and (on
+ * firmware before 3.0) cAHI. 47/49/50 are lifetime cumulative counters.
  *
- * Because the device's own published indices cannot be reproduced exactly,
- * all indices in this app are computed from event XML and labelled as ours.
+ * The remaining named fields follow prisma JOURNAL's own reader (SJ.js):
+ *   10  leak histogram, 20 bins of 2-second samples; bins 14+ are high leak
+ *   21  pressure histogram, minutes per 0.5 hPa bin starting at 4 hPa
+ *   41  events at high pressure (firmware 3.5+)
+ *   42  deep sleep indicator, minutes
+ *
+ * These let the app show the device's own figures beside ours (see
+ * deviceSummary in analysis.js). Our indices are still computed from event
+ * XML and labelled as ours.
  */
 export const PSSTAT_FIELDS = {
   '5':  'sessionStartUnix',
   '6':  'therapyMinutes',
   '7':  'unknown7',
   '9':  'unknown9',
-  '10': 'histogramA',
+  '10': 'leakHistogram',
   '15': 'unknown15',
-  '16': 'hypopneaObstructiveStat',
-  '17': 'hypopneaCentralStat',
+  '16': 'obstructiveEventStat',
+  '17': 'centralEventStat',
   '18': 'reraCount',
   '19': 'snoreRelated',
   '20': 'unknown20',
-  '21': 'histogramB',
+  '21': 'pressureHistogram',
   '37': 'obstructiveApneaCount',
   '38': 'centralApneaCount',
-  '41': 'unknown41',
-  '42': 'unknown42',
+  '41': 'highPressureEventCount',
+  '42': 'deepSleepMinutes',
   '44': 'unknown44',
   '46': 'unknown46',
   '47': 'cumulativeMinutesA',
@@ -376,7 +386,7 @@ export function parseStatistics (text) {
     for (const [k, name] of Object.entries(PSSTAT_FIELDS)) {
       if (d[k] !== undefined) out[name] = d[k];
     }
-    if (out.sessionStartUnix) out.sessionStart = new Date(out.sessionStartUnix * 1000);
+    if (out.sessionStartUnix) out.sessionStart = wallClock(out.sessionStartUnix);
     // Each day embeds the config that was active that night.
     if (typeof d.cfg === 'string') {
       try { out.config = parseConfig(d.cfg); } catch { /* tolerate */ }
@@ -419,6 +429,16 @@ export function parseTrendCurves (buffer) {
     payload: buffer.slice(start),
     decoded: false
   };
+}
+
+/**
+ * Seconds of wall-clock time since 1970 -> a local Date showing that same
+ * clock time, whatever timezone the reader's browser is in.
+ */
+export function wallClock (sec) {
+  const u = new Date(sec * 1000);
+  return new Date(u.getUTCFullYear(), u.getUTCMonth(), u.getUTCDate(),
+    u.getUTCHours(), u.getUTCMinutes(), u.getUTCSeconds());
 }
 
 function stripBom (s) {

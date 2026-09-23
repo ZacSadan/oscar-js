@@ -573,6 +573,28 @@ main { padding-block: 26px 40px; }
 .line-pressure { stroke: var(--accent); }
 .dot { fill: var(--accent); }
 
+/* The device's own figures (statistic.psstat), drawn in the text colour with
+   hollow or dashed marks so they never read as a second copy of ours. */
+.device-mark { stroke: var(--text); stroke-width: 2; stroke-linecap: round; }
+.line-device { stroke: var(--text-soft); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.dot-device  { fill: var(--surface); stroke: var(--text-soft); stroke-width: 1.5; }
+.bar-deep    { fill: var(--sleep-deep); }
+/* A night known only from the device summary: real usage, but no session
+   files behind it, so it is drawn lighter than a fully recorded night. */
+.bar-summary { opacity: .5; }
+
+.swatch.swatch-device-mark {
+  block-size: 3px;
+  border-radius: 1px;
+  background: var(--text);
+}
+.swatch.swatch-line-pressure { block-size: 3px; background: var(--accent); }
+.swatch.swatch-line-device {
+  block-size: 0;
+  border-block-start: 2px dashed var(--text-soft);
+  border-radius: 0;
+}
+
 .wave { stroke: var(--accent); stroke-width: 1; fill: none; }
 
 .legend {

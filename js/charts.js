@@ -247,7 +247,7 @@ function tooltipTitle (node, text) {
  * AHI per night, with the clinical threshold marked.
  * -------------------------------------------------------------------------*/
 export function ahiChart (nights, i18n, { w = 720, h = 220, sleep = null } = {}) {
-  if (nights.filter(n => n.hours > 0).length < 2) return null;
+  if (nights.filter(n => n.hours > 0 || n.device).length < 2) return null;
   // Sleep is keyed by night so a day the card never recorded can still show
   // its grey bar — those are exactly the nights worth seeing here, because
   // they are the ones slept without therapy.
@@ -256,7 +256,8 @@ export function ahiChart (nights, i18n, { w = 720, h = 220, sleep = null } = {})
     : null;
   const data = fillMissingDays(nights, sleepByKey);
   const values = data.filter(n => n.hours > 0).map(n => n.ahi);
-  const s = scales([...values, 5], w, h);
+  const deviceValues = data.filter(n => n.device).map(n => n.device.ahi);
+  const s = scales([...values, ...deviceValues, 5], w, h);
   const svg = svgRoot(w, h, 'chart');
   svg.appendChild(gridAndAxis(s, w, h, i18n));
   weekSeparators(svg, s, data, h);
@@ -302,27 +303,75 @@ export function ahiChart (nights, i18n, { w = 720, h = 220, sleep = null } = {})
         x: s.bx(i, n) - bw / 2, y: s.y(s.min) - 2, width: bw, height: 2,
         class: 'bar bar-missing'
       });
-      tooltipTitle(stub, `${i18n.date(night.dateObj)} — ${i18n.t('noUse')}`);
+      tooltipTitle(stub, `${i18n.date(night.dateObj)} — ${
+        i18n.t(night.statOnly ? 'statOnlyNight' : 'noUse')}`);
       svg.appendChild(stub);
-      return;
-    }
-    const v = night.ahi;
-    const y = s.y(v);
-    const band = v < 5 ? 'good' : v < 15 ? 'warn' : 'bad';
-    const bar = el('rect', {
-      x: s.bx(i, n) - bw / 2, y, width: bw, height: Math.max(1, s.y(s.min) - y),
-      rx: 2, class: `bar bar-${band}`
-    });
-    tooltipTitle(bar,
-      `AHI — ${i18n.date(night.dateObj)}: ${i18n.num(v)}` +
-      `
+    } else {
+      const v = night.ahi;
+      const y = s.y(v);
+      const band = v < 5 ? 'good' : v < 15 ? 'warn' : 'bad';
+      const bar = el('rect', {
+        x: s.bx(i, n) - bw / 2, y, width: bw, height: Math.max(1, s.y(s.min) - y),
+        rx: 2, class: `bar bar-${band}`
+      });
+      tooltipTitle(bar,
+        `AHI — ${i18n.date(night.dateObj)}: ${i18n.num(v)}` +
+        `
 
 ${i18n.t('gAhi')}`);
-    svg.appendChild(bar);
+      svg.appendChild(bar);
+    }
+    // The device's own AHI as a tick across the slot, so the two definitions
+    // can be compared night by night — including nights we cannot score.
+    if (night.device) {
+      const d = night.device;
+      const y = s.y(d.ahi);
+      const mark = el('line', {
+        x1: s.bx(i, n) - bw * 0.7, x2: s.bx(i, n) + bw * 0.7, y1: y, y2: y,
+        class: 'device-mark'
+      });
+      tooltipTitle(mark, `${i18n.t('deviceAhi')} — ${i18n.date(night.dateObj)}: ` +
+        `${i18n.int(d.ahi)}\n${deviceAhiParts(d, i18n)}\n\n${i18n.t('gDeviceAhi')}`);
+      svg.appendChild(mark);
+    }
   });
 
   svg.appendChild(xLabels(s, n, data.map(d => dayLabel(d, i18n)), h));
   return svg;
+}
+
+/** "oAHI 1 · cAI 0 · at high pressure 0" for a device summary. */
+export function deviceAhiParts (d, i18n) {
+  const parts = [`oAHI ${i18n.int(d.oAhi)}`, `cAI ${i18n.int(d.cAi)}`];
+  if (d.highPressureAhi != null) {
+    parts.push(`${i18n.t('deviceHighPressure')} ${i18n.int(d.highPressureAhi)}`);
+  }
+  return parts.join(' · ');
+}
+
+/** A legend from [{ cls, label, help }] entries; labels are already text. */
+function legendOf (entries, i18n) {
+  const wrap = document.createElement('div');
+  wrap.className = 'legend';
+  for (const c of entries) {
+    const item = document.createElement('span');
+    item.className = 'legend-item has-help';
+    item.title = `${c.label}\n\n${i18n.t(c.help)}`;
+    const sw = document.createElement('i');
+    sw.className = `swatch ${c.cls}`;
+    item.append(sw, document.createTextNode(c.label));
+    wrap.appendChild(item);
+  }
+  return wrap;
+}
+
+/** Legend for the AHI chart, once it carries the device's marks. */
+export function ahiLegend (report, i18n) {
+  if (!report.deviceAvg) return null;
+  return legendOf([
+    { cls: 'bar-good', label: i18n.t('ourAhi'), help: 'gAhi' },
+    { cls: 'swatch-device-mark', label: i18n.t('deviceAhi'), help: 'gDeviceAhi' }
+  ], i18n);
 }
 
 /* ---------------------------------------------------------------------------
@@ -370,11 +419,13 @@ export function usageChart (nights, i18n, { w = 720, h = 200, sleep = null } = {
       x: therapyX(i), y: v > 0 ? y : s.y(s.min) - 2, width: bw,
       height: v > 0 ? Math.max(1, s.y(s.min) - y) : 2,
       rx: 2,
-      class: `bar ${v >= 4 ? 'bar-good' : v > 0 ? 'bar-warn' : 'bar-missing'}`
+      class: `bar ${v >= 4 ? 'bar-good' : v > 0 ? 'bar-warn' : 'bar-missing'}` +
+        (night.statOnly ? ' bar-summary' : '')
     });
     tooltipTitle(bar,
       `${i18n.t('colUse')} — ${i18n.date(night.dateObj)}: ${
         v > 0 ? i18n.duration(night.totalSec) : i18n.t('noUse')}` +
+      (night.statOnly ? `\n${i18n.t('statOnlyNight')}` : '') +
       `
 
 ${i18n.t('gUsage')}`);
@@ -486,50 +537,125 @@ export function compositionLegend (i18n) {
 }
 
 /* ---------------------------------------------------------------------------
- * Pressure: median line with p95 area.
+ * Pressure: our P95 from the event records, and the device's P90 from its
+ * pressure histogram — the figure prisma JOURNAL charts.
  * -------------------------------------------------------------------------*/
+const devP90 = (n) => n.device?.pressureP90 ?? null;
+
 export function pressureChart (nights, i18n, { w = 720, h = 190 } = {}) {
-  if (nights.filter(n => n.pressureP95 != null).length < 2) return null;
+  if (nights.filter(n => n.pressureP95 != null || devP90(n) != null).length < 2) return null;
   const data = fillMissingDays(nights);
-  const s = scales(data.filter(n => n.pressureP95 != null).map(n => n.pressureP95),
-    w, h, { headroom: 1.2 });
+  const s = scales([
+    ...data.map(n => n.pressureP95).filter(v => v != null),
+    ...data.map(devP90).filter(v => v != null)
+  ], w, h, { headroom: 1.2 });
   const svg = svgRoot(w, h, 'chart');
   svg.appendChild(gridAndAxis(s, w, h, i18n, 4, v => i18n.num(v, 0)));
   weekSeparators(svg, s, data, h);
 
   const n = data.length;
-  // Break the line wherever a day has no pressure, rather than interpolating
-  // across a gap and implying therapy continued.
-  let run = [];
-  const flush = () => {
-    if (run.length > 1) {
-      svg.appendChild(el('polyline', {
-        points: run.map(p => p.join(',')).join(' '), class: 'line line-pressure'
-      }));
-    }
-    run = [];
-  };
-  data.forEach((night, i) => {
-    if (night.pressureP95 == null) { flush(); return; }
-    run.push([s.bx(i, n), s.y(night.pressureP95)]);
-  });
-  flush();
-
-  data.forEach((night, i) => {
-    if (night.pressureP95 == null) return;
-    const c = el('circle', {
-      cx: s.bx(i, n), cy: s.y(night.pressureP95), r: 3, class: 'dot'
+  const series = [
+    { get: n => n.pressureP95, line: 'line-pressure', dot: 'dot', label: 'colPressure', help: 'gP95' },
+    { get: devP90, line: 'line-device', dot: 'dot-device', label: 'devicePressureP90', help: 'gDeviceP90' }
+  ];
+  for (const ser of series) {
+    // Break the line wherever a day has no pressure, rather than interpolating
+    // across a gap and implying therapy continued.
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        svg.appendChild(el('polyline', {
+          points: run.map(p => p.join(',')).join(' '), class: `line ${ser.line}`
+        }));
+      }
+      run = [];
+    };
+    data.forEach((night, i) => {
+      const v = ser.get(night);
+      if (v == null) { flush(); return; }
+      run.push([s.bx(i, n), s.y(v)]);
     });
-    tooltipTitle(c,
-      `${i18n.t('colPressure')} — ${i18n.date(night.dateObj)}: ${i18n.num(night.pressureP95)} cmH₂O` +
-      `
+    flush();
 
-${i18n.t('gP95')}`);
-    svg.appendChild(c);
+    data.forEach((night, i) => {
+      const v = ser.get(night);
+      if (v == null) return;
+      const c = el('circle', { cx: s.bx(i, n), cy: s.y(v), r: 3, class: ser.dot });
+      tooltipTitle(c,
+        `${i18n.t(ser.label)} — ${i18n.date(night.dateObj)}: ${i18n.num(v)} cmH₂O` +
+        `\n\n${i18n.t(ser.help)}`);
+      svg.appendChild(c);
+    });
+  }
+
+  svg.appendChild(xLabels(s, n, data.map(d => dayLabel(d, i18n)), h));
+  return svg;
+}
+
+export function pressureLegend (report, i18n) {
+  if (!report.deviceAvg) return null;
+  return legendOf([
+    { cls: 'swatch-line-pressure', label: i18n.t('colPressure'), help: 'gP95' },
+    { cls: 'swatch-line-device', label: i18n.t('devicePressureP90'), help: 'gDeviceP90' }
+  ], i18n);
+}
+
+/* ---------------------------------------------------------------------------
+ * The device's own nightly figures as bars: deep-sleep indicator (minutes)
+ * and share of the night in high leak. Neither exists in the event records,
+ * so these come from statistic.psstat alone.
+ * -------------------------------------------------------------------------*/
+function deviceBarChart (nights, i18n, { get, cls, label, help, fmt, floor = 1, w = 720, h = 190 }) {
+  if (nights.filter(n => n.device && get(n.device) != null).length < 2) return null;
+  const data = fillMissingDays(nights);
+  const vals = data.filter(n => n.device && get(n.device) != null).map(n => get(n.device));
+  const s = scales([...vals, floor], w, h);
+  const svg = svgRoot(w, h, 'chart');
+  svg.appendChild(gridAndAxis(s, w, h, i18n));
+  weekSeparators(svg, s, data, h);
+
+  const n = data.length;
+  const bw = s.bw(n);
+  data.forEach((night, i) => {
+    const v = night.device ? get(night.device) : null;
+    const has = v != null && v > 0;
+    const y = has ? s.y(v) : s.y(s.min) - 2;
+    const bar = el('rect', {
+      x: s.bx(i, n) - bw / 2, y, width: bw,
+      height: has ? Math.max(1, s.y(s.min) - y) : 2,
+      rx: 2, class: `bar ${has ? cls : 'bar-missing'}`
+    });
+    tooltipTitle(bar, `${i18n.t(label)} — ${i18n.date(night.dateObj)}: ${
+      v != null ? fmt(v) : i18n.t('noUse')}\n\n${i18n.t(help)}`);
+    svg.appendChild(bar);
   });
 
   svg.appendChild(xLabels(s, n, data.map(d => dayLabel(d, i18n)), h));
   return svg;
+}
+
+export function deepSleepChart (nights, i18n, opts = {}) {
+  return deviceBarChart(nights, i18n, {
+    ...opts,
+    get: d => d.deepSleepMin,
+    cls: 'bar-deep',
+    label: 'deviceDeepSleep',
+    help: 'gDeviceDeepSleep',
+    fmt: v => `${i18n.int(v)} ${i18n.t('minutesShort')}`,
+    floor: 10
+  });
+}
+
+export function highLeakChart (nights, i18n, opts = {}) {
+  return deviceBarChart(nights, i18n, {
+    ...opts,
+    get: d => d.highLeakPct,
+    cls: 'bar-warn',
+    label: 'deviceHighLeak',
+    help: 'gDeviceHighLeak',
+    fmt: v => `${i18n.int(v)}%`,
+    floor: 4
+  });
 }
 
 /* ---------------------------------------------------------------------------

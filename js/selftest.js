@@ -12,7 +12,7 @@
 import { parseWmedf, parseEventXml, parseConfig, parseStatistics } from './parsers.js';
 import {
   buildSession, buildNight, buildReport, percentile, median, linearTrend,
-  hoursFromNoon
+  hoursFromNoon, deviceSummary, histogramP90
 } from './analysis.js';
 
 const results = [];
@@ -297,6 +297,40 @@ function testStatisticsParsing () {
   check('obstructive apnea mapped to field 37', s.days[0].obstructiveApneaCount, 1);
   check('central apnea mapped to field 38', s.days[0].centralApneaCount, 3);
   checkTrue('session start converted to Date', s.days[0].sessionStart instanceof Date);
+  // Field 5 is the device's wall clock: 1788821876 read as UTC is
+  // 2026-09-07 22:57:56, and must stay 22:57 whatever the reader's timezone.
+  check('session start is wall-clock hour', s.days[0].sessionStart.getHours(), 22);
+  check('session start is wall-clock date', s.days[0].sessionStart.getDate(), 7);
+}
+
+function testDeviceSummary () {
+  // Synthetic psstat row, shaped like a prisma SMART one (fw 3.17.0008).
+  const stat = {
+    therapyMinutes: 330, obstructiveEventStat: 7, centralEventStat: 5,
+    centralApneaCount: 1, highPressureEventCount: 0, deepSleepMinutes: 90,
+    pressureHistogram: [10, 10, 20, 40, 30, 110, 40, 20, 5, 30, 10, 10],
+    leakHistogram: [9000, 700, 200, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  };
+  const d = deviceSummary(stat, '3.17.0008');
+  check('device oAHI uses field 16', d.oAhi, 1);          // 7 / 5.5 h
+  check('device cAI uses central apneas on fw 3.0+', d.cAi, 0);
+  check('device cAI uses field 17 before fw 3.0', deviceSummary(stat, '2.9').cAi, 1);
+  check('device AHI sums its parts', d.ahi, 1);
+  check('device P90 from 0.5 hPa histogram', d.pressureP90, 8.5);
+  check('device high leak share', d.highLeakPct, 0);
+  check('device deep sleep minutes', d.deepSleepMin, 90);
+  // 40 samples x 2 s in the high bins = 1 min of 100 -> 1%.
+  check('high leak counts bins 14+', deviceSummary({
+    therapyMinutes: 100, leakHistogram: [...Array(14).fill(0), 40]
+  }, '3.17').highLeakPct, 1);
+  check('under 3 minutes is not a used night', deviceSummary({ therapyMinutes: 2 }), null);
+  check('empty pressure histogram has no P90', histogramP90([0, 0, 0]), null);
+
+  // A night the card has no folder for still counts its usage, but not ours.
+  const n = buildNight('20260811', [], { therapyMinutes: 181 }, { firmware: '3.17' });
+  checkTrue('summary-only night flagged', n.statOnly);
+  check('summary-only night takes device usage', n.totalSec, 181 * 60);
+  check('summary-only night is not scored', n.hours, 0);
 }
 
 function testClockTimes () {
@@ -420,6 +454,7 @@ export function run () {
   testHoursFromNoon();
   testConfigParsing();
   testStatisticsParsing();
+  testDeviceSummary();
   testStats();
   testReportRollup();
   testEmptyAndDegenerate();

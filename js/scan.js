@@ -21,7 +21,7 @@ import {
   parseWmedf, parseEventXml, parseConfig, parseStatistics, parseTrendCurves,
   parsePsCloud, parseDeviceLog
 } from './parsers.js';
-import { buildSession, buildNight, buildReport } from './analysis.js';
+import { buildSession, buildNight, buildReport, DEVICE_MIN_USE_MIN } from './analysis.js';
 
 const DAY_RE = /(?:^|\/)(\d{8})\//;
 const EVENT_RE = /event_(\d+)\.xml$/i;
@@ -199,17 +199,29 @@ export async function scanCard (entries, onProgress = () => {}) {
   const extras = await readExtras(entries, errors);
 
   // ---- index statistics by night, using the noon-to-noon rule -------------
+  // sessionStart is the device's wall clock, so the local date getters give
+  // the device's own date. Two rows landing on one night is rare; the one
+  // with more therapy time wins, so an empty mask-on test can't hide a night.
   const statByDay = new Map();
   if (statistics) {
     for (const d of statistics.days) {
       if (!d.sessionStart) continue;
       const shifted = new Date(d.sessionStart.getTime() - 12 * 3600 * 1000);
-      statByDay.set(dayKey(shifted), d);
+      const key = dayKey(shifted);
+      const prev = statByDay.get(key);
+      if (!prev || (d.therapyMinutes || 0) > (prev.therapyMinutes || 0)) statByDay.set(key, d);
     }
   }
 
-  const nights = [...byNight.keys()].sort().map(day =>
-    buildNight(day, byNight.get(day), statByDay.get(day))
+  // Nights the summary records but the card no longer has folders for are
+  // included too: the device keeps a longer daily history than session files.
+  const firmware = config?.firmware ?? statistics?.device?.fwversion ?? null;
+  const days = new Set(byNight.keys());
+  for (const [day, d] of statByDay) {
+    if (!days.has(day) && d.therapyMinutes >= DEVICE_MIN_USE_MIN) days.add(day);
+  }
+  const nights = [...days].sort().map(day =>
+    buildNight(day, byNight.get(day) || [], statByDay.get(day), { firmware })
   );
 
   const device = {
