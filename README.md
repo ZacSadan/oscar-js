@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🫁 CPAP Analyzer
+# OSCAR-JS 🫁 CPAP Analyzer
 
 **A complete therapy report from your Löwenstein prisma SD card — entirely in your browser.**
 
