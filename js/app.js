@@ -12,7 +12,8 @@ import {
   ahiChart, usageChart, compositionChart, compositionLegend,
   pressureChart, sleepTimingChart, waveformChart, mixDonut,
   sleepStageComparisonChart, sleepStageLegend, usageLegend,
-  ahiLegend, pressureLegend, deepSleepChart, highLeakChart, deviceAhiParts
+  ahiLegend, pressureLegend, deepSleepChart, highLeakChart, deviceAhiParts,
+  deepSleepPanelsChart, deepSleepPanelsLegend
 } from './charts.js';
 import {
   loadCredentials, saveCredentials, clearCredentials, redirectUri,
@@ -566,10 +567,22 @@ function renderCharts (r) {
   add('chartTiming', sleepTimingChart(r.nights, i18n, { sleep: r.sleep }), null,
     r.sleep?.matched ? 'chartTimingHintSleep' : 'chartTimingHint');
 
-  // Restorative-sleep comparison, only when both groups have enough nights to
-  // be worth putting side by side.
-  const stages = sleepStageComparisonChart(r, i18n);
-  if (stages) {
+  // Deep sleep from both sources — the device's indicator above, the watch's
+  // restorative share below — on one date axis. When only one source is
+  // present its own chart is shown instead, further down.
+  const deepPanels = deepSleepPanelsChart(r, i18n);
+  const stages = deepPanels ? null : sleepStageComparisonChart(r, i18n);
+  if (deepPanels) {
+    const fig = h('figure', 'chart-figure');
+    fig.append(
+      h('figcaption', null, i18n.t('chartDeepCombined')),
+      h('p', 'chart-hint', i18n.t('chartDeepCombinedHint')),
+      deepPanels,
+      deepSleepPanelsLegend(i18n),
+      h('p', 'sleep-compare-note', i18n.t('sleepCompareCaveat'))
+    );
+    box.appendChild(fig);
+  } else if (stages) {
     const fig = h('figure', 'chart-figure');
     fig.append(
       h('figcaption', null, i18n.t('chartSleepStages')),
@@ -583,7 +596,7 @@ function renderCharts (r) {
 
   add('chartComposition', compositionChart(r.nights, i18n), compositionLegend(i18n));
   add('chartPressure', pressureChart(r.nights, i18n), pressureLegend(r, i18n));
-  add('chartDeepSleep', deepSleepChart(r.nights, i18n), null, 'chartDeepSleepHint');
+  if (!deepPanels) add('chartDeepSleep', deepSleepChart(r.nights, i18n), null, 'chartDeepSleepHint');
   add('chartHighLeak', highLeakChart(r.nights, i18n), null, 'chartHighLeakHint');
 
   if (box.children.length === 1) {

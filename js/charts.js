@@ -30,6 +30,10 @@ function svgRoot (w, h, cls) {
     role: 'img'
   });
   s.setAttribute('dir', 'ltr');
+  // `dir` alone does not reach SVG text: text-anchor follows the CSS
+  // `direction` property, which a Hebrew page sets to rtl. Without this every
+  // start/end-anchored label flips sides and runs off the plot.
+  s.setAttribute('direction', 'ltr');
   return s;
 }
 
@@ -227,15 +231,29 @@ function weekSeparators (svg, s, data, h) {
   if (g.childNodes.length) svg.appendChild(g);
 }
 
+/**
+ * A label pinned to the left or right edge of the plot, reading in the
+ * language's own direction. The chart itself is LTR, but a Hebrew label that
+ * mixes in Latin ("סף AHI 5") only comes out in the right word order inside
+ * an RTL run — so the run gets the page's direction and the anchor is chosen
+ * to keep the text on the same side of `x` either way.
+ */
+function edgeLabel (x, y, text, i18n, cls, edge) {
+  const rtl = i18n?.dir === 'rtl';
+  // In an RTL run `start` is the text's right edge and `end` its left.
+  const anchor = edge === 'left' ? (rtl ? 'end' : 'start') : (rtl ? 'start' : 'end');
+  return el('text', {
+    x, y, class: cls, 'text-anchor': anchor, direction: rtl ? 'rtl' : 'ltr'
+  }, text);
+}
+
 /** A dashed reference line with its label placed inside the plot area. */
-function thresholdLine (svg, s, w, value, text) {
+function thresholdLine (svg, s, w, value, text, i18n) {
   const y = s.y(value);
   svg.appendChild(el('line', {
     x1: PAD.left, x2: w - PAD.right, y1: y, y2: y, class: 'threshold'
   }));
-  svg.appendChild(el('text', {
-    x: w - PAD.right - 2, y: y - 5, class: 'threshold-label', 'text-anchor': 'end'
-  }, text));
+  svg.appendChild(edgeLabel(w - PAD.right - 2, y - 5, text, i18n, 'threshold-label', 'right'));
 }
 
 function tooltipTitle (node, text) {
@@ -262,7 +280,7 @@ export function ahiChart (nights, i18n, { w = 720, h = 220, sleep = null } = {})
   svg.appendChild(gridAndAxis(s, w, h, i18n));
   weekSeparators(svg, s, data, h);
 
-  thresholdLine(svg, s, w, 5, i18n.t('thresholdLine'));
+  thresholdLine(svg, s, w, 5, i18n.t('thresholdLine'), i18n);
 
   const n = data.length;
 
@@ -396,7 +414,7 @@ export function usageChart (nights, i18n, { w = 720, h = 200, sleep = null } = {
   svg.appendChild(gridAndAxis(s, w, h, i18n, 4, v => i18n.num(v, 0)));
   weekSeparators(svg, s, data, h);
 
-  thresholdLine(svg, s, w, 4, i18n.t('complianceLine'));
+  thresholdLine(svg, s, w, 4, i18n.t('complianceLine'), i18n);
 
   const n = data.length;
 
@@ -638,7 +656,7 @@ export function deepSleepChart (nights, i18n, opts = {}) {
   return deviceBarChart(nights, i18n, {
     ...opts,
     get: d => d.deepSleepMin,
-    cls: 'bar-deep',
+    cls: 'bar-device',
     label: 'deviceDeepSleep',
     help: 'gDeviceDeepSleep',
     fmt: v => `${i18n.int(v)} ${i18n.t('minutesShort')}`,
@@ -924,9 +942,9 @@ export function waveformChart (samples, hz, i18n, { w = 720, h = 150, label = ''
  * The caller shows that caveat, and the group averages are drawn as reference
  * lines only when there are enough nights on both sides to be worth comparing.
  * -------------------------------------------------------------------------*/
-export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = {}) {
+function restorativeRows (report) {
   const s = report.sleep;
-  if (!s || !s.nights?.length) return null;
+  if (!s || !s.nights?.length) return [];
 
   const splitByKey = new Map(
     report.nights.filter(n => n.sleepSplit).map(n => [n.date, n.sleepSplit]));
@@ -956,7 +974,7 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   // exists to make — and reads as missing data rather than as a good night.
   // Only nights where the mask came off partway appear, which is also what
   // makes the comparison tight: both halves come from the same night.
-  const rows = s.nights.map(x => {
+  return s.nights.map(x => {
     const split = splitByKey.get(x.dateKey);
     if (!split || !scored(split.on) || !scored(split.off)) return null;
     return {
@@ -967,11 +985,27 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
     };
   }).filter(Boolean)
     .sort((a, b) => a.key.localeCompare(b.key));
+}
 
+const restorativeValues = (rows) =>
+  rows.flatMap(r => [r.on?.deepRemPct, r.off?.deepRemPct]).filter(v => v != null);
+
+/**
+ * Better/worse tint for a row: which half of the night scored higher. A
+ * hair's difference is not a verdict, so a clear margin is required.
+ */
+function restorativeVerdict (r) {
+  const a = r?.on?.deepRemPct, b = r?.off?.deepRemPct;
+  if (a == null || b == null) return null;
+  if (Math.abs(a - b) < 1) return null;
+  return a > b ? 'wd-better' : 'wd-worse';
+}
+
+export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = {}) {
+  const rows = restorativeRows(report);
   if (rows.length < 2) return null;
 
-  const values = rows.flatMap(r => [r.on?.deepRemPct, r.off?.deepRemPct])
-    .filter(v => v != null);
+  const values = restorativeValues(rows);
   if (!values.length) return null;
 
   const scale = scales(values, w, h, { headroom: 1.25 });
@@ -979,10 +1013,25 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
   svg.appendChild(gridAndAxis(scale, w, h, i18n, 4, v => `${i18n.num(v, 0)}%`));
 
   const n = rows.length;
-  const full = scale.bw(n);
-  const bw = full / 2;
+  drawRestorative(svg, scale, rows, rows.map((_, i) => i), n, report.sleep, i18n, w);
 
-  rows.forEach((r, i) => {
+  svg.appendChild(xLabels(scale, n, rows.map(r => [
+    i18n.weekday(r.dateObj, 'narrow'),
+    i18n.date(r.dateObj, { day: '2-digit', month: '2-digit' })
+  ]), h, (i) => restorativeVerdict(rows[i])));
+  return svg;
+}
+
+/**
+ * The with/without-CPAP pairs and the two group averages. `slots[k]` is the
+ * x slot of rows[k] out of `n`, so the same drawing serves a chart of its
+ * own rows and a panel laid on a full calendar axis.
+ */
+function drawRestorative (svg, scale, rows, slots, n, s, i18n, w) {
+  const bw = scale.bw(n) / 2;
+
+  rows.forEach((r, k) => {
+    const i = slots[k];
     // With-CPAP takes the left half of the slot, without-CPAP the right, so
     // the pair reads the same way on every night even when one side is absent.
     const pairs = [
@@ -1035,30 +1084,86 @@ export function sleepStageComparisonChart (report, i18n, { w = 720, h = 260 } = 
         x: PAD.left + 2, y: labelY - 10, width: text.length * 6.2 + 8, height: 14,
         rx: 3, class: 'avg-label-plate'
       }));
-      svg.appendChild(el('text', {
-        x: PAD.left + 6, y: labelY, class: `threshold-label ${g.cls}-text`,
-        'text-anchor': 'start'
-      }, text));
+      svg.appendChild(edgeLabel(PAD.left + 6, labelY, text, i18n,
+        `threshold-label ${g.cls}-text`, 'left'));
     }
   }
+}
 
-  // Tint the weekday label by which half of the night came out better. Only
-  // nights carrying BOTH figures can be judged; a night with no unmasked
-  // sleep has nothing to lose to, so it stays neutral.
-  const verdict = (i) => {
-    const r = rows[i];
-    const a = r?.on?.deepRemPct, b = r?.off?.deepRemPct;
-    if (a == null || b == null) return null;
-    // A hair's difference is not a verdict; require a clear margin.
-    if (Math.abs(a - b) < 1) return null;
-    return a > b ? 'wd-better' : 'wd-worse';
+/* ---------------------------------------------------------------------------
+ * Deep sleep, device and watch: two panels on one calendar axis.
+ *
+ * Top: the machine's deep-sleep indicator (minutes), every therapy night.
+ * Bottom: the watch's restorative share, with the mask on and off, on the
+ * nights where the mask came off partway. The panels keep their own units —
+ * minutes and percent cannot share an axis — but share the dates, so a night
+ * reads straight down from one to the other.
+ * -------------------------------------------------------------------------*/
+export function deepSleepPanelsChart (report, i18n, { w = 720, h = 400 } = {}) {
+  const deep = (n) => n.device?.deepSleepMin ?? null;
+  if (report.nights.filter(n => deep(n) != null).length < 2) return null;
+  const rows = restorativeRows(report);
+  if (rows.length < 2) return null;
+
+  const data = fillMissingDays(report.nights);
+  const n = data.length;
+  const slotOf = new Map(data.map((d, i) => [d.date, i]));
+  const kept = rows.filter(r => slotOf.has(r.key));
+  if (kept.length < 2) return null;
+
+  const base = scales([1], w, h);
+  const plotBottom = h - PAD.bottom;
+  const gap = 34;
+  const split = PAD.top + (plotBottom - PAD.top - gap) / 2;
+  const panel = (values, yTop, yBottom, headroom) => {
+    const top = Math.max((values.length ? Math.max(...values) : 1) * headroom, 1);
+    return { ...base, min: 0, top, y: v => yBottom - (v / top) * (yBottom - yTop) };
   };
+  const labelRoom = 14;
+  const devS = panel(data.map(deep).filter(v => v != null), PAD.top + labelRoom, split, 1.12);
+  const watchS = panel(restorativeValues(kept), split + gap + labelRoom, plotBottom, 1.25);
 
-  svg.appendChild(xLabels(scale, n, rows.map(r => [
-    i18n.weekday(r.dateObj, 'narrow'),
-    i18n.date(r.dateObj, { day: '2-digit', month: '2-digit' })
-  ]), h, verdict));
+  const svg = svgRoot(w, h, 'chart');
+  svg.appendChild(gridAndAxis(devS, w, h, i18n, 3));
+  svg.appendChild(gridAndAxis(watchS, w, h, i18n, 3, v => `${i18n.num(v, 0)}%`));
+  weekSeparators(svg, base, data, h);
+
+  const panelLabel = (y, key) =>
+    svg.appendChild(edgeLabel(PAD.left, y, i18n.t(key), i18n, 'tick panel-label', 'left'));
+  panelLabel(PAD.top + 4, 'panelDeviceDeep');
+  panelLabel(split + gap + 4, 'panelWatchRestorative');
+
+  const bw = base.bw(n);
+  data.forEach((night, i) => {
+    const v = deep(night);
+    const has = v != null && v > 0;
+    const y = has ? devS.y(v) : devS.y(0) - 2;
+    const bar = el('rect', {
+      x: base.bx(i, n) - bw / 2, y, width: bw,
+      height: has ? Math.max(1, devS.y(0) - y) : 2,
+      rx: 2, class: `bar ${has ? 'bar-device' : 'bar-missing'}`
+    });
+    tooltipTitle(bar, `${i18n.t('deviceDeepSleep')} — ${i18n.date(night.dateObj)}: ${
+      v != null ? `${i18n.int(v)} ${i18n.t('minutesShort')}` : i18n.t('noUse')}` +
+      `\n\n${i18n.t('gDeviceDeepSleep')}`);
+    svg.appendChild(bar);
+  });
+
+  drawRestorative(svg, watchS, kept, kept.map(r => slotOf.get(r.key)), n, report.sleep, i18n, w);
+
+  const rowAt = new Map(kept.map(r => [slotOf.get(r.key), r]));
+  svg.appendChild(xLabels(base, n, data.map(d => dayLabel(d, i18n)), h,
+    (i) => restorativeVerdict(rowAt.get(i))));
   return svg;
+}
+
+/** Legend for the two-panel chart: the device's bars, then the watch's pair. */
+export function deepSleepPanelsLegend (i18n) {
+  return legendOf([
+    { cls: 'bar-device', label: i18n.t('deviceDeepSleep'), help: 'gDeviceDeepSleep' },
+    { cls: 'bar-cpap', label: i18n.t('sleepWithCpap'), help: 'gSleepRestorative' },
+    { cls: 'bar-nocpap', label: i18n.t('sleepWithoutCpap'), help: 'gSleepRestorative' }
+  ], i18n);
 }
 
 /** YYYYMMDD -> Date, for sleep nights that never matched a card night. */

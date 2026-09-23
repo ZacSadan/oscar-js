@@ -578,7 +578,11 @@ main { padding-block: 26px 40px; }
 .device-mark { stroke: var(--text); stroke-width: 2; stroke-linecap: round; }
 .line-device { stroke: var(--text-soft); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .dot-device  { fill: var(--surface); stroke: var(--text-soft); stroke-width: 1.5; }
-.bar-deep    { fill: var(--sleep-deep); }
+/* Device bars stay neutral: the watch's with-CPAP bars already own the
+   sleep blue, and the two sit in panels right above each other. */
+.bar-device  { fill: var(--text-soft); }
+.swatch.bar-device { background: var(--text-soft); }
+.panel-label { font-weight: 600; fill: var(--text-soft); }
 /* A night known only from the device summary: real usage, but no session
    files behind it, so it is drawn lighter than a fully recorded night. */
 .bar-summary { opacity: .5; }
