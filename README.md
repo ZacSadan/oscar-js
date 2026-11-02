@@ -9,7 +9,7 @@ honest account of how every number was derived. In Hebrew and English.
 
 [![No build step](https://img.shields.io/badge/build-none-success)](#running-it)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-success)](#running-it)
-[![Tests](https://img.shields.io/badge/self--tests-83%20passing-success)](#tests)
+[![Tests](https://img.shields.io/badge/self--tests-98%20passing-success)](#tests)
 [![Privacy](https://img.shields.io/badge/data-never%20leaves%20your%20device-blue)](#privacy)
 [![Languages](https://img.shields.io/badge/languages-עברית%20%7C%20English-blue)](#language)
 
@@ -27,13 +27,19 @@ Your card is read in the browser and never uploaded.
 ## What it looks like
 
 <div align="center">
-  <img src="screenshots/02-overview.png" alt="Overview panel: average AHI 6.7 in the mild band, 6.7 h average use, 100% of nights at 4 h or more, 14 nights analysed, 93 h total therapy time, RDI 9.1, and a donut breaking 771 recorded events into obstructive apnea, central apnea, hypopnea and RERA" width="900">
+  <img src="screenshots/02-overview.png" alt="Overview panel: average AHI 6.7 in the mild band, 6.2 h average use, 100% of nights at 4 h or more, 18 nights analysed, 112 h total therapy time, RDI 9.2; the device's own AHI of 7/h, P90 pressure of 10.0 cmH2O and deep-sleep indicator of 79 min; and a donut breaking 805 recorded events into obstructive apnea, central apnea, hypopnea and RERA" width="900">
 </div>
 
 Six headline figures, each colour-banded against its own benchmark, with the
-event mix beside them. Nothing here is read off the device's own display — every
+event mix beside them. None of these is read off the device's own display — every
 index is recomputed from the event records, for reasons explained in
 [How the numbers are computed](#how-the-numbers-are-computed).
+
+Beside them, three further cards show **the device's own figures** — its AHI,
+P90 pressure, share of time in high leak, and deep-sleep indicator — computed
+from `statistic.psstat` the way the manufacturer's prisma JOURNAL viewer
+computes them. They are always labelled as the device's, so a reader comparing
+against JOURNAL finds the same numbers, and can see where ours differ.
 
 ### Findings written for a person, not a technician
 
@@ -177,13 +183,30 @@ by event count. Exactly one of the first four fires.
 Rows with `—` in the Tier column are structural or arithmetic observations
 rather than threshold judgements, so they carry no provenance badge.
 
-### Five trend charts, drawn without a chart library
+### Trend charts, drawn without a chart library
 
 <div align="center">
-  <img src="screenshots/04-charts.png" alt="Five charts: AHI per night against the threshold of 5, hours of use against the 4-hour benchmark, a sleep-timing candle chart, stacked event composition, and 95th-percentile pressure" width="900">
+  <img src="screenshots/04-charts.png" alt="Seven charts: AHI per night against the threshold of 5 with the device's AHI as a tick, hours of use against the 4-hour benchmark, a sleep-timing candle chart, stacked event composition, our P95 pressure beside the device's P90, the device's deep-sleep minutes, and the device's share of time in high leak" width="900">
 </div>
 
-Every chart is hand-built inline SVG. Some details worth pointing out:
+Every chart is hand-built inline SVG:
+
+| Chart | Shows |
+|---|---|
+| AHI by night | our AHI against the threshold of 5, with a tick for the device's own AHI |
+| Hours of use by night | therapy time against the 4-hour benchmark |
+| Sleep timing by night | a candle per night — time in bed and therapy time inside it |
+| Event composition | stacked event types per night |
+| Pressure | our P95 from the event records beside the device's P90 from its histogram |
+| Deep sleep indicator *(device)* | minutes the machine estimated as deep sleep |
+| Time in high leak *(device)* | share of the night in the device's high-leak range |
+
+With [Withings sleep data](#optional-sleep-stages-from-a-withings-device)
+loaded, the usage chart gains a sleep bar per night, the timing chart gains a
+grey band for the time you were actually asleep, and the deep-sleep chart
+becomes a two-panel chart comparing the device's estimate with the watch's.
+
+Some details worth pointing out:
 
 - **Missing nights stay missing.** 30 August has no therapy, and it renders as a
   visible gap rather than two bars sliding together to hide it.
@@ -198,8 +221,13 @@ Every chart is hand-built inline SVG. Some details worth pointing out:
 ### Night by night, down to the waveform
 
 <div align="center">
-  <img src="screenshots/05-nights.png" alt="Sortable night table with one row expanded, showing the night's sessions, a decoded RespFlow waveform, an event breakdown, and the twelve recorded channels as chips" width="900">
+  <img src="screenshots/05-nights.png" alt="Night table with the device's AHI, P90 and deep-sleep columns beside ours, four summary-only nights at the top, and one row expanded to show its session, a decoded RespFlow waveform, an event breakdown, and the twelve recorded channels as chips" width="900">
 </div>
+
+The table puts the device's AHI, P90 pressure and deep-sleep minutes in columns
+beside ours. Nights the card no longer has session folders for — the device's
+daily summary keeps a longer history than its recordings — still appear, with
+usage and the device's figures but no indices of our own.
 
 Expand any night for its sessions, an event breakdown, the channels that night
 recorded, and **on-demand waveform decoding** — waveforms are never decoded
@@ -246,12 +274,13 @@ used it, and why not when it didn't. This is what makes the report honest — a
 reader can see nothing was quietly skipped:
 
 <div align="center">
-  <img src="screenshots/08-appendix.png" alt="Appendix showing a file inventory of 76 files grouped by type and marked fully, partly or not used, plus trend-curve headers, the cloud upload bundle, device logs and credits" width="900">
+  <img src="screenshots/08-appendix.png" alt="Appendix showing a file inventory of 57 files grouped by type and marked fully, partly or not used, plus trend-curve headers, the cloud upload bundle, device logs and credits" width="900">
 </div>
 
 > [!NOTE]
-> Every screenshot above is generated from **synthetic data** — a fabricated
-> fortnight written by a script, with waveforms built from sine functions. No
+> Every screenshot in this README is generated from **synthetic data** — a
+> fabricated fortnight written by a script, with waveforms built from sine
+> functions and Withings sleep stages served by a stand-in for its API. No
 > patient data appears anywhere in this repository.
 
 ---
@@ -277,21 +306,27 @@ Dragging a folder onto the page also works.
 ### Privacy
 
 **Everything runs as static JavaScript in the page.** There is no upload, no
-server, no telemetry, and no network request of any kind — the card's contents
-never leave the machine. **The app only ever reads.** Nothing is written to the
-card.
+server, and no telemetry, and the CPAP report makes no network request of any
+kind — the card's contents never leave the machine. **The app only ever reads.**
+Nothing is written to the card.
+
+The one exception is opt-in: the
+[Withings sleep import](#optional-sleep-stages-from-a-withings-device) talks to
+Withings, and only when you click *Connect Withings*. Even then, nothing from
+the card is sent — the page only downloads your sleep data from Withings.
 
 ```
 index.html            the app
 css/style.css         direction-agnostic styling (LTR + RTL)
 js/parsers.js         .wmedf / event XML / .pscfg / .psstat / .tc / .pscloud / .log readers
-js/analysis.js        sessions, nights, indices, insight engine
+js/analysis.js        sessions, nights, indices, device figures, insight engine
 js/i18n.js            Hebrew + English strings, locale formatting
 js/charts.js          inline SVG charts (no chart library)
 js/scan.js            folder walking and orchestration
+js/withings.js        optional Withings sleep-stage import (OAuth + API)
 js/app.js             UI
-js/selftest.js        83 assertions on the arithmetic that fails silently
-screenshots/     the images in this README (synthetic data)
+js/selftest.js        98 assertions on the arithmetic that fails silently
+screenshots/          the images in this README (synthetic data)
 ```
 
 ### Language
@@ -316,14 +351,17 @@ stylesheet. Numbers and dates are formatted with `Intl`.
 ## What it reports
 
 - **Overview** — average AHI with severity band, usage, nights at 4 h or more,
-  RDI, total therapy time, event-mix donut.
+  RDI, total therapy time, event-mix donut, and the device's own AHI, P90
+  pressure, high-leak share and deep-sleep indicator.
 - **Insights and action items** — 39 rules covering residual AHI,
   central-vs-obstructive balance, periodic breathing and CSR, adherence, bedtime
   regularity, late-night event clustering, mask leak and removals, snoring,
   pressure ceiling, long events, and trends over the period.
-- **Trends** — the five charts above.
-- **Night by night** — a table down to per-session detail, with on-demand
-  waveform decoding.
+- **Sleep stages** *(optional)* — Withings sleep data paired with each night;
+  see below.
+- **Trends** — the charts above.
+- **Night by night** — a table down to per-session detail, our figures beside
+  the device's, with on-demand waveform decoding.
 - **Glossary and method** — every term defined, and how each index was computed.
 - **Appendix** — a full inventory of the picked folder, trend-curve headers, the
   cloud-upload bundle and its certificate, device logs, and credits.
@@ -334,12 +372,14 @@ stylesheet. Numbers and dates are formatted with `Intl`.
 Indices are computed here from the event records, **not** read from the device's
 own summary. This is deliberate:
 
-- The device prints an AHI that uses an undisclosed formula. Independent attempts
-  to reproduce it have failed, so this app publishes its own documented
-  definition rather than pretending to match the display.
-- `statistic.psstat` fields 16/17 track hypopneas but consistently exceed the
-  event-file counts, apparently including sub-threshold events. They are parsed
-  and exposed but never used for scoring.
+- The device's AHI is built from its own event tallies in `statistic.psstat`,
+  not from the event file. Its fields 16/17 run consistently higher than the
+  event-file hypopnea counts, and the device rounds its rates to whole numbers.
+  This app publishes its own documented definition from the event records
+  instead of inheriting those tallies.
+- The device's figures are still shown, beside ours and labelled as the
+  device's, computed the way prisma JOURNAL computes them (below). They are
+  never used for scoring or by the insight engine.
 
 | Index | Definition |
 |---|---|
@@ -357,6 +397,77 @@ Severity bands (normal / mild / moderate / severe at 5 / 15 / 30) are the
 conventional **AASM diagnostic** bands. They describe untreated severity; on
 therapy the usual goal is simply "under 5". They are not an OSCAR definition —
 OSCAR publishes no severity thresholds.
+
+#### The device's own figures
+
+These follow the formulas in prisma JOURNAL's own reader, so the numbers match
+what that viewer shows. Each night uses its `statistic.psstat` row; nights under
+3 minutes of use are treated as unused, as JOURNAL does.
+
+| Figure | Definition |
+|---|---|
+| oAHI | field 16 (obstructive event tally) × 60 ÷ therapy minutes, rounded |
+| cAI | field 38 (central apneas) × 60 ÷ minutes, rounded — field 17 before firmware 3.0 |
+| high-pressure AHI | field 41 × 60 ÷ minutes, rounded — firmware 3.5 and later |
+| Device AHI | oAHI + cAI + high-pressure AHI |
+| P90 pressure | first 0.5 hPa bin of the field 21 histogram passing 90% of minutes |
+| High leak | share of therapy time in bins 14+ of the field 10 leak histogram |
+| Deep sleep | field 42, minutes, as the device reports it |
+
+Period averages are combined as JOURNAL combines them: each component index is
+averaged across nights and rounded before they are summed, and P90 and high leak
+come from the histograms summed across all nights.
+
+---
+
+## Optional: sleep stages from a Withings device
+
+The CPAP card knows when the mask was on. It does not know when you were
+asleep, or what your sleep looked like. A Withings watch or Sleep Analyzer
+knows both, and pairing the two answers questions neither can answer alone:
+
+- **Asleep vs mask-on.** The timing chart gains a grey band for the time you
+  were asleep. Where grey extends past the therapy block, you slept without the
+  mask; where the block extends past the grey, the machine ran while you were
+  awake. The usage chart puts sleep time beside therapy time.
+- **Masked vs unmasked sleep.** Per-minute sleep stages are split at each
+  session's mask-on and mask-off times. On nights where the mask came off
+  partway, the app compares **restorative sleep** (deep + REM as a share of
+  sleep) during the masked half and the unmasked half of the *same night*.
+  Only those nights appear, because a night worn throughout has nothing to
+  compare against.
+- **Device vs watch deep sleep.** When both are present, the device's
+  deep-sleep estimate and the watch's restorative share are drawn as two
+  panels on one date axis.
+
+<div align="center">
+  <img src="screenshots/11-sleep-charts.png" alt="With Withings data loaded: the usage chart with a grey watch-sleep bar beside each therapy bar; the timing chart with a grey band showing when the watch recorded sleep behind each therapy candle; and a two-panel deep-sleep chart, the device's deep-sleep minutes above and the watch's deep plus REM share below, split into with-CPAP and without-CPAP bars on nights the mask came off partway" width="900">
+</div>
+
+The comparison is framed as a prompt, not a result: the mask usually comes off
+late in the night, when sleep is naturally more REM-heavy anyway.
+
+### Setting it up
+
+Withings supports only the OAuth authorization-code flow with a client secret.
+It has no PKCE and no public-client app type, so a page with no server cannot
+complete a login without a secret. Shipping one in this repository would
+publish it to every visitor. Instead **each reader registers their own
+application**:
+
+1. Register a free application at
+   [developer.withings.com](https://developer.withings.com) and enable
+   restricted mode.
+2. Set its callback URL to the address of the page itself — the directory form,
+   e.g. `https://<user>.github.io/<repo>/`. The app shows the exact URL to
+   register under **Set up**.
+3. In the app, open **Set up**, paste the client ID and secret, and save.
+4. Click **Connect Withings** and approve access in the popup.
+
+The credentials are stored only in that browser's `localStorage` and are sent
+only to Withings. The access token is kept in memory for the import and never
+stored. Only the `user.activity` scope (sleep and activity) is requested;
+`user.info` is deliberately not, because it also grants device-link management.
 
 ---
 
@@ -400,7 +511,7 @@ unit, and labels the axis accordingly.
 node js/selftest.js
 ```
 
-**83 assertions**, all passing, covering mixed byte widths, signed byte channels,
+**98 assertions**, all passing, covering mixed byte widths, signed byte channels,
 de-interleaving, decisecond conversion, pascal conversion, event classification,
 index arithmetic, short-session exclusion, the noon-to-noon day boundary, clock
 handling across midnight, and degenerate inputs. All fixtures are built in
@@ -611,20 +722,30 @@ across all 14 nights — three fields matched on every night:
 
 | Key | Meaning | Confidence |
 |---|---|---|
-| `5` | session start, unix seconds | measured |
+| `5` | session start, device wall-clock seconds since 1970 | measured |
 | `6` | therapy minutes | measured |
 | `18` | RERA count = XML `121` | **exact, 14/14 nights** |
 | `37` | obstructive apnea = XML `101` | **exact, 14/14 nights** |
 | `38` | central apnea = XML `102` | **exact, 14/14 nights** |
-| `10` | 20-value histogram | inferred (pressure) |
-| `21` | 33-value histogram | inferred (per-hour) |
-| `16` / `17` | hypopnea counters | see below |
+| `16` / `17` | device's obstructive / central event tallies | measured + JOURNAL |
+| `10` | leak histogram, 20 bins of 2-second samples; bins 14+ are high leak | JOURNAL |
+| `21` | pressure histogram, minutes per 0.5 hPa bin from 4 hPa | JOURNAL |
+| `41` | events at high pressure (firmware 3.5+) | JOURNAL |
+| `42` | deep-sleep indicator, minutes | JOURNAL |
 | `47` / `49` / `50` | lifetime cumulative counters | inferred |
 
-**Measured:** fields `16`/`17` correlate with hypopneas but are consistently
-**higher** than the XML `111`/`112` counts on every night — apparently including
-sub-threshold events the event file omits. They are exposed but never used for
-scoring.
+"JOURNAL" means the reading follows the manufacturer's prisma JOURNAL web
+viewer's own reader of this file.
+
+**Measured:** field `5` is not true unix time. Read as UTC, it reproduces the
+EDF header's local start time exactly (`07.09.26 22.57.56` ↔ 22:57) — it counts
+the device's own wall clock, which has no timezone.
+
+**Measured:** fields `16`/`17` are consistently **higher** than the XML
+`111`/`112` hypopnea counts on every night. They are the device's own event
+tallies behind its oAHI and (before firmware 3.0) its cAHI, and include events
+the event file does not record as hypopneas. They feed the device's figures
+shown beside ours, never our own scoring.
 
 This also corrects a published field map that assigns `16`→OA, `17`→OH, `18`→CA,
 `19`→CH, `38`→RERA. That mapping does not hold on this firmware; the measured one
@@ -645,8 +766,13 @@ calendar day.
 The folder name therefore already *is* the night — trust it, and never re-derive
 the night from a session timestamp. When indexing `statistic.psstat` rows (which
 carry timestamps, not folder names) against nights, subtract 12 hours first, then
-take the local calendar date. This shift correctly paired every stat row to its
-folder across all 14 nights.
+take the calendar date. This shift correctly paired every stat row to its folder
+across all 14 nights.
+
+`statistic.psstat` keeps a longer daily history than the session folders, so
+some rows have no folder at all. Those nights are dated by the same shifted
+timestamp — the one case where the night does come from a timestamp — and
+appear with usage and the device's figures but no event-based indices.
 
 ### Not decoded
 
